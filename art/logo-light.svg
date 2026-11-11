@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="642" height="192" viewBox="0 0 642 192">
+  <g transform="translate(0 16) scale(2.5)">
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="#5B8EE6" stroke-width="5">
+    <path d="M9 23 V9 H23"/><path d="M41 9 H55 V23"/><path d="M9 41 V55 H23"/><path d="M55 41 V55 H41"/>
+  </g>
+  <g stroke="#1F2328" stroke-width="5">
+    <path d="M20 22 L32 32 L20 42"/><path d="M32 22 L44 32 L32 42"/>
+  </g>
+</g>
+  </g>
+  <text x="184" y="135" font-family="'Segoe UI Semibold','Segoe UI',sans-serif" font-weight="600" font-size="112"><tspan fill="#1F2328">Frame</tspan><tspan fill="#5B8EE6">jet</tspan></text>
+</svg>

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in Framejet doesn't work as it should.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Framejet version
+      description: The first line of the right-click menu, for example Framejet 1.0.0.
+    validations:
+      required: true
+  - type: input
+    id: capture-card
+    attributes:
+      label: Capture card
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run winver, for example Windows 11 24H2.
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >-
+        Drag in `%AppData%\Framejet\Framejet.log`, and `Framejet.old.log` if it happened in the session before. The log names your devices and your Windows user folder, so take out anything you'd rather not share.
+    validations:
+      required: false

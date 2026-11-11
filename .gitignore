@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+*.log
+
+# brainstorming mockups and the throwaway Direct3D spike stay local
+.superpowers/
+spike/
+
+# this PC's hardware for the Platform tests
+hardware.local.ini

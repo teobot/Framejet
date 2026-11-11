@@ -1,0 +1,38 @@
+name: Build
+
+# Builds Framejet and runs the Core tests on every push to main and on every pull request.
+# The Platform tests need real devices, so they never run here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The SDK that global.json pins. Without global.json the runner's newest SDK would build instead.
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build Framejet.sln -c Release --nologo
+
+      - name: Run the Core tests
+        run: dotnet test tests\Framejet.Core.Tests -c Release --no-build --nologo
+
+      # Windows PowerShell runs on .NET Framework, like the app.
+      - name: Check the exe carries all its dlls
+        shell: powershell
+        run: .\.github\check-single-exe.ps1 src\Framejet\bin\Release\net48

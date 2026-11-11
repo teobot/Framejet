@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.11.0" />
+    <PackageReference Include="xunit" Version="2.4.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.5" PrivateAssets="all" />
+    <PackageReference Include="Xunit.SkippableFact" Version="1.4.13" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Framejet.Platform\Framejet.Platform.csproj" />
+    <ProjectReference Include="..\..\src\Framejet.Core\Framejet.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="hardware.local.ini" Condition="Exists('hardware.local.ini')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
