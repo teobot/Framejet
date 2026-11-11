@@ -1,6 +1,6 @@
 name: Release
 
-# Publishing a release on GitHub builds Framejet.exe and attaches it to that release, with THIRD-PARTY-NOTICES.md.
+# Publishing a release on GitHub builds Framejet.exe and attaches it to that release, with THIRD-PARTY-NOTICES.md and DirectShowLib's source.
 # "Run workflow" on the Actions tab does the same build and keeps the exe on the run instead.
 on:
   release:
@@ -44,12 +44,12 @@ jobs:
         shell: powershell
         run: .\.github\check-single-exe.ps1 src\Framejet\bin\Release\net48
 
-      - name: Attach Framejet.exe and THIRD-PARTY-NOTICES.md to the release
+      - name: Attach Framejet.exe, the notices and DirectShowLib's source to the release
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$env:TAG" src\Framejet\bin\Release\net48\Framejet.exe THIRD-PARTY-NOTICES.md --clobber --repo "$env:GITHUB_REPOSITORY"
+        run: gh release upload "$env:TAG" src\Framejet\bin\Release\net48\Framejet.exe THIRD-PARTY-NOTICES.md third-party\DirectShowLib-source.zip --clobber --repo "$env:GITHUB_REPOSITORY"
 
       - name: Keep Framejet.exe on this run
         if: github.event_name == 'workflow_dispatch'
