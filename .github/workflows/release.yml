@@ -1,7 +1,8 @@
 name: Release
 
-# Publishing a release on GitHub builds Framejet.exe and attaches it to that release, with THIRD-PARTY-NOTICES.md and DirectShowLib's source.
-# "Run workflow" on the Actions tab does the same build and keeps the exe on the run instead.
+# Publishing a release on GitHub builds Framejet.exe and attaches it, with the files it ships with, to that release.
+# If any step fails, the release goes back to being a draft, so the latest release never lacks its exe.
+# "Run workflow" on the Actions tab does the same build and keeps the same files on the run instead.
 on:
   release:
     types: [published]
@@ -44,18 +45,32 @@ jobs:
         shell: powershell
         run: .\.github\check-single-exe.ps1 src\Framejet\bin\Release\net48
 
-      - name: Attach Framejet.exe, the notices and DirectShowLib's source to the release
+      - name: Check the DirectShowLib source matches the build
+        shell: powershell
+        run: .\.github\check-third-party.ps1
+
+      - name: Attach the release files
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: gh release upload "$env:TAG" src\Framejet\bin\Release\net48\Framejet.exe THIRD-PARTY-NOTICES.md third-party\DirectShowLib-source.zip --clobber --repo "$env:GITHUB_REPOSITORY"
 
-      - name: Keep Framejet.exe on this run
+      - name: Keep the release files on this run
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v7
         with:
           name: Framejet
-          path: src/Framejet/bin/Release/net48/Framejet.exe
+          path: |
+            src/Framejet/bin/Release/net48/Framejet.exe
+            THIRD-PARTY-NOTICES.md
+            third-party/DirectShowLib-source.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Put the release back to a draft
+        if: failure() && github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release edit "$env:TAG" --draft --repo "$env:GITHUB_REPOSITORY"

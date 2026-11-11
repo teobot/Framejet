@@ -36,6 +36,8 @@ Framejet shows what your USB capture card sees, and plays its sound, with as lit
 
 **[Download Framejet.exe](https://github.com/teobot/Framejet/releases/latest/download/Framejet.exe)** from the latest release. It needs Windows 10 or 11 and .NET Framework 4.8, which comes with Windows 11 and with Windows 10 from version 1903 (the May 2019 Update). Earlier Windows 10 builds need [.NET Framework 4.8](https://dotnet.microsoft.com/download/dotnet-framework/net48) installed.
 
+Framejet.exe includes open-source libraries, among them DirectShowLib under the LGPL. Their licences are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), and every release also carries DirectShowLib's source.
+
 If your browser says Framejet.exe isn't commonly downloaded, choose **Keep**. The exe isn't code-signed, so the first time you open it, Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
 
 ## Using it

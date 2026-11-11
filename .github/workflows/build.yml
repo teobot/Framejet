@@ -36,3 +36,7 @@ jobs:
       - name: Check the exe carries all its dlls
         shell: powershell
         run: .\.github\check-single-exe.ps1 src\Framejet\bin\Release\net48
+
+      - name: Check the DirectShowLib source matches the build
+        shell: powershell
+        run: .\.github\check-third-party.ps1
