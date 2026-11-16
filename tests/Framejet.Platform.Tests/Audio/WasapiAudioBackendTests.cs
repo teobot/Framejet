@@ -23,6 +23,7 @@ namespace Framejet.Platform.Tests.Audio
             Skip.If(input == null, "no Ripsaw input, and no microphone set in hardware.local.ini"); var output = b.DefaultOutput(); Assert.NotNull(output); Assert.Contains(b.ListOutputs(), o => o.Id == output.Id);
             b.Start(input, output, 0f); Thread.Sleep(2000); var s = b.GetStats(reset: false); b.Stop(); b.Stop();
             Assert.Null(failed); Assert.True(s.BytesCaptured > 0); Assert.True(s.MaxBufferedMs <= 70, $"max {s.MaxBufferedMs} ms");
+            Assert.NotNull(s.Delay); Assert.True(s.Delay.CaptureMs > 0); Assert.True(s.Delay.OutputMs > 0); Assert.Equal("normal", s.Delay.Mode); Assert.True(s.Delay.TotalMeanMs < 200, $"total {s.Delay.TotalMeanMs} ms");
         }
 
         [SkippableFact, Trait("Category", "Hardware")] public void Watcher_registers_and_unregisters()

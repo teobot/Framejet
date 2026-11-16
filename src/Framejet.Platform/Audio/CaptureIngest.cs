@@ -1,6 +1,7 @@
 using System;
 using NAudio.Wave;
 using Framejet.Core.Audio;
+using Framejet.Core.Video;
 
 namespace Framejet.Platform.Audio
 {
@@ -13,6 +14,10 @@ namespace Framejet.Platform.Audio
         readonly object _statsLock = new object();
         readonly byte[] _drain = new byte[16384];
         byte[] _floatScratch = new byte[0]; // touched only on the capture thread
+
+        // Buffer level after each packet, newest 6000 (about a minute at 10 ms packets); guarded by _statsLock.
+        readonly double[] _levels = new double[6000];
+        int _levelCount, _levelNext;
 
         long _bytes; float _peak; double _buffered, _maxBuffered; int _trimsBase;
 
@@ -54,6 +59,9 @@ namespace Framejet.Platform.Audio
                 _bytes += count;
                 if (peak > _peak) _peak = peak;
                 _buffered = ms;
+                _levels[_levelNext] = ms;
+                _levelNext = (_levelNext + 1) % _levels.Length;
+                if (_levelCount < _levels.Length) _levelCount++;
                 if (preTrimMs > _maxBuffered) _maxBuffered = preTrimMs;
             }
         }
@@ -62,8 +70,10 @@ namespace Framejet.Platform.Audio
         {
             lock (_statsLock)
             {
-                var s = new AudioStats { BytesCaptured = _bytes, Peak = _peak, BufferedMs = _buffered, MaxBufferedMs = _maxBuffered, Trims = _trimmer.Trims - _trimsBase };
-                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _trimmer.Trims; }
+                var level = TimingStats.From(new ArraySegment<double>(_levels, 0, _levelCount));
+                var s = new AudioStats { BytesCaptured = _bytes, Peak = _peak, BufferedMs = _buffered, MaxBufferedMs = _maxBuffered, Trims = _trimmer.Trims - _trimsBase,
+                    Delay = new AudioDelay { BufferMeanMs = level.MeanMs, BufferP95Ms = level.P95Ms } };
+                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _trimmer.Trims; _levelCount = 0; _levelNext = 0; }
                 return s;
             }
         }

@@ -44,5 +44,24 @@ namespace Framejet.Platform.Tests.Audio
             Assert.Equal(s.BufferedMs, s.MaxBufferedMs, 3);
             Assert.Equal(0, s.Trims);
         }
+
+        [Fact]
+        public void Buffer_level_stats_cover_every_packet()
+        {
+            var ingest = Make(out var buf, out _);
+            for (int i = 0; i < 100; i++)
+            {
+                buf.ClearBuffer();
+                int ms = i % 2 == 0 ? 10 : 12;
+                ingest.Process(Chunk(ms), 48 * ms * 8);
+            }
+
+            var d = ingest.Snapshot(false).Delay;
+            Assert.InRange(d.BufferMeanMs, 10.5, 11.5);
+            Assert.InRange(d.BufferP95Ms, 11.5, 12.5);
+
+            ingest.Snapshot(true);
+            Assert.Equal(0, ingest.Snapshot(false).Delay.BufferMeanMs);
+        }
     }
 }
