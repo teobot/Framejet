@@ -104,6 +104,9 @@ namespace Framejet.Platform.Video
         /// <summary>Counters and timings since the start or the last reset; all zero when stopped. It copies and sorts the timing samples: for reports, not for polling.</summary>
         public PresenterStats GetStats() => _presenter?.GetStats() ?? new PresenterStats();
 
+        /// <summary>The presenter's totals; all zero when stopped. Cheap and allocation-free, for a once-a-second poll.</summary>
+        public PresenterCounters GetCounters() => _presenter?.GetCounters() ?? default;
+
         /// <summary>The draw rate over the last second; 0 when stopped. Cheap and allocation-free, for the status text.</summary>
         public double MeasuredFps => _presenter?.MeasuredFps ?? 0;
 

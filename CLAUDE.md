@@ -101,6 +101,7 @@ At 60 Hz a frame that misses the display's ~4 ms latch shows a refresh later, an
 - On first run, `SettingsCarryOver` copies `settings.ini` from `%AppData%\PlayThrough` (the app's earlier name) if `%AppData%\Framejet` doesn't exist yet. There is no copy with `--settings`.
 - Unstamped builds are `0.0.0-dev` and never check for updates.
 - Logs go in `Framejet.log`, with the previous session kept as `Framejet.old.log`.
+- Dev builds (`0.0.0-dev`) also log playback health: a `hiccup` line for each bad second, a `stats (minute)` line and what the player did. They keep five sessions of up to 8 MB. Releases don't. `Core/Diagnostics/HealthMonitor` judges the seconds.
 - Only an explicit mode pick saves a mode; the automatic default follows the screen the window is on.
 
 ### Single exe

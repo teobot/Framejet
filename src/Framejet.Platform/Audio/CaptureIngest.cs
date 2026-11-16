@@ -112,6 +112,9 @@ namespace Framejet.Platform.Audio
             }
         }
 
+        /// <summary>Trims since this chain started; never reset.</summary>
+        public int TrimsTotal => _trimmer.Trims;
+
         public AudioStats Snapshot(bool reset)
         {
             lock (_statsLock)
