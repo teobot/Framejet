@@ -200,3 +200,16 @@ The A/V sync check is never a gate: it needs a person and a PS5.
 - The flash and beep detection thresholds and the smoothing constants, tuned on the real card.
 - The sync check dialog's visuals (dark theme, matching §4.6).
 - How tests simulate clock drift (a fake clock feeding `DriftController`).
+
+## 10. Measurements
+
+Self-test, Release build, the Ripsaw X's HDMI input into the Windows default output (a virtual mixer endpoint), volume 0, median of three runs. The figures are Framejet's own share; a virtual mixer or headset adds its own delay on top.
+
+| Step | Mode | Capture | Buffer mean / p95 | Output | Total mean / p95 | Underruns | A/V sync check |
+|---|---|---|---|---|---|---|---|
+| Baseline (today's chain, 2026-11-16) | normal, 10 ms period | 10.0 | 10.1 / 10.0 | 12.0 | 32.1 / 32.0 ms | 0 | pending (owner) |
+
+Notes on the baseline:
+- The live clients were read in all three runs (log: `capture=live client, output=live client`).
+- Over a 4 s run the card's clock drift doesn't show: the buffer sat at its 10 ms packet size with no trims. The 15–60 ms sawtooth the design describes builds over minutes, so a long run is needed to see it.
+- The capture stream reports no added latency of its own beyond its 10 ms buffer.
