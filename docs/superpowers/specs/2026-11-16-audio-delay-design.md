@@ -70,8 +70,8 @@ The owner asked for "the best option for the best result", so the build is 1 + 2
 ### 5.1 Measuring Framejet's own audio delay (self-test)
 
 The backend reports, per session:
-- **Capture side:** the capture stream's latency and device period as Windows reports them, plus the buffer size in use.
-- **Ring buffer:** the level's mean, p95 and max over the run, plus underruns and trims (or corrections).
+- **Capture side:** the capture stream's latency and device period as Windows reports them, plus the mean length of the packets delivered (a sample waits up to one packet before it is handed over).
+- **Ring buffer:** the level just before each packet is added (what was already waiting for it), as a mean and p95 over the run, plus the max, underruns and trims (or corrections). Counting the level after the add would count the packet a second time.
 - **Output side:** the output stream's latency and device period, plus the mean queued output (padding).
 - **Estimated Framejet audio delay:** the sum of capture + ring mean + output, as a mean and a p95.
 
@@ -205,26 +205,29 @@ The A/V sync check is never a gate: it needs a person and a PS5.
 
 Self-test, Release build, the Ripsaw X's HDMI input into the Windows default output (a virtual mixer endpoint), volume 0, median of three runs. The figures are Framejet's own share; a virtual mixer or headset adds its own delay on top.
 
-| Step | Mode | Capture | Buffer mean / p95 | Output | Total mean / p95 | Underruns | A/V sync check |
-|---|---|---|---|---|---|---|---|
-| Baseline (today's chain, 2026-11-16) | normal, 10 ms period | 10.0 | 10.1 / 10.0 | 12.0 | 32.1 / 32.0 ms | 0 | pending (owner) |
+| Step | Accounting | Mode | Capture | Buffer mean / p95 | Output | Total mean / p95 | Underruns | A/V sync check |
+|---|---|---|---|---|---|---|---|---|
+| Baseline (today's chain, 2026-11-16) | old | normal, 10 ms period | 10.0 | 10.1 / 10.0 | 12.0 | 32.1 / 32.0 ms | 0 | pending (owner) |
+| Rate control + 10 ms output (4b75ee2) | old | normal, 10 ms period | 10.0 | 14.5 / 20.0 (runs: 10.0–17.9) | 12.0 | 36.5 / 42.0 (runs: 32.0, 36.5, 39.9) | 0 | — |
+| Low-latency output, normal capture (1e6301b, reverted) | old | mixed: 10 ms capture, 2 ms output | — | — | — | 27.2, 27.3 ms (4 s); 34.0 ms with 1 underrun (60 s); one run fell back to 44.5 | 0–1 | — |
+| Rate control with glitch-free headroom (1e6301b, reverted) | old | normal | — | — | — | 44.5–50.8 ms | 0 | — |
+| Today's chain, corrected accounting (final review, 2026-11-16) | corrected | normal, 10 ms period | 10.0 | 0.1 / 0.0 (runs: 0.0–0.2) | 12.0 | 22.1 / 22.0 ms (runs: 22.2, 22.1, 22.0) | 0 | — |
+
+**Correction (final review):** the rows marked *old* double-counted one 10 ms capture packet. Capture counted the 10 ms capture buffer, and the buffer counted the ring level after each packet was added, which already held that packet. Subtract 10 ms from every *old* total to compare: the baseline is 22 ms, not 32. Now capture is the capture stream's latency plus the measured packet length, and the buffer is the level just before each packet is added. In all three corrected runs the capture stream itself reported 0 ms, so capture is the 10 ms packet alone.
 
 Notes on the baseline:
 - The live clients were read in all three runs (log: `capture=live client, output=live client`).
-- Over a 4 s run the card's clock drift doesn't show: the buffer sat at its 10 ms packet size with no trims. The 15–60 ms sawtooth the design describes builds over minutes, so a long run is needed to see it.
-- The capture stream reports no added latency of its own beyond its 10 ms buffer.
-| Rate control + 10 ms output (4b75ee2) | normal, 10 ms period | 10.0 | 14.5 / 20.0 (runs: 10.0–17.9) | 12.0 | 36.5 / 42.0 (runs: 32.0, 36.5, 39.9) | 0 | — |
+- Over a 4 s run the card's clock drift doesn't show: the buffer sat at its 10 ms packet size with no trims (0 ms waiting before each packet, in the corrected accounting). The 15–60 ms sawtooth the design describes builds over minutes, so a long run is needed to see it.
+- The capture stream reports no added latency of its own beyond its 10 ms packet.
 
 Notes after rate control:
-- **Both chains settle in one of two states.** The pre-change chain, rebuilt and run 6 more times, gave 32.1, 42.0, 32.0, 32.0, 35.1 and 32.0 ms, with 0 underruns. Capture and output events land at almost the same instant each 10 ms period, and their order decides whether the ring holds one packet or two. In the two-packet state, the extra packet covers late capture packets: draining it causes underruns.
-- **So the first baseline (32 ms) was the lucky state.** With 10 ms periods, rate control can't beat it. What rate control gives here:
+- **Both chains settle in one of two states.** The pre-change chain, rebuilt and run 6 more times, gave 32.1, 42.0, 32.0, 32.0, 35.1 and 32.0 ms (old accounting; 22–32 ms corrected), with 0 underruns. Capture and output events land at almost the same instant each 10 ms period, and their order decides whether the ring holds one packet or two. In the two-packet state, the extra packet covers late capture packets: draining it causes underruns.
+- **So the first baseline (32 ms old, 22 ms corrected) was the lucky state.** With 10 ms periods, rate control can't beat it. What rate control gives here:
   - no trims and no target ratchet
   - correction of a fast card clock over long sessions
   - sinc resampling, which also stops the 7–8 dB treble loss the old resampler had at 15 kHz when the rates differed
 - **The phase step shrinks with the period.** Low-latency mode (2.67 ms periods) is where the remaining gain is.
 - **The 64-tap sinc resampler adds about 0.7 ms** of group delay.
-| Low-latency output, normal capture (1e6301b, reverted) | mixed: 10 ms capture, 2 ms output | — | — | — | 27.2, 27.3 ms (4 s); 34.0 ms with 1 underrun (60 s); one run fell back to 44.5 | 0–1 | — |
-| Rate control with glitch-free headroom (1e6301b, reverted) | normal | — | — | — | 44.5–50.8 ms | 0 | — |
 
 ## 11. Outcome (owner, 2026-11-16)
 
@@ -234,8 +237,8 @@ The owner chose **measurement only**:
 
 Why:
 - **The input can't go low-latency.** The Ripsaw X's HDMI input offers no low-latency period, so only the output side can use it.
-- **The output side alone wasn't reliable.** It reached about 27 ms but fell back intermittently on the virtual mixer.
-- **Glitch-free normal mode cost more delay.** It needed 45–50 ms of added delay, against today's 32–42 ms.
+- **The output side alone wasn't reliable.** It reached about 27 ms (about 17 ms corrected, §10) but fell back intermittently on the virtual mixer.
+- **Glitch-free normal mode cost more delay.** It needed 45–50 ms of added delay, against today's 32–42 ms. Those figures use the old accounting (§10); corrected, they are 35–40 ms against 22–32 ms.
 
 Further notes:
 - **Copy added to the sync check during the build:** "The check stopped: the picture or sound went away." It shows when video or audio stops mid-check.

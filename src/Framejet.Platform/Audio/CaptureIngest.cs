@@ -16,11 +16,12 @@ namespace Framejet.Platform.Audio
         readonly byte[] _drain = new byte[16384];
         byte[] _floatScratch = new byte[0]; // touched only on the capture thread
 
-        // Buffer level after each packet, newest 6000 (about a minute at 10 ms packets); guarded by _statsLock.
+        // Buffer level just before each packet is added (what was already waiting for it), newest 6000 (about a
+        // minute at 10 ms packets); guarded by _statsLock. The packet itself is counted on the capture side.
         readonly double[] _levels = new double[6000];
         int _levelCount, _levelNext;
 
-        long _bytes; float _peak; double _buffered, _maxBuffered; int _trimsBase;
+        long _bytes; float _peak; double _buffered, _maxBuffered, _packetMsSum; int _packets, _trimsBase;
         volatile Action<long, float> _blockPeakTap;
         long _lastBlockStamp = long.MinValue; // touched only on the capture thread
 
@@ -55,6 +56,7 @@ namespace Framejet.Platform.Audio
             var tap = _blockPeakTap;
             if (tap != null) TapBlocks(tap, n, bf, arrived);
 
+            double waitingMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
             _buffer.AddSamples(_floatScratch, 0, n);
             double preTrimMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
 
@@ -72,7 +74,9 @@ namespace Framejet.Platform.Audio
                 _bytes += count;
                 if (peak > _peak) _peak = peak;
                 _buffered = ms;
-                _levels[_levelNext] = ms;
+                _levels[_levelNext] = waitingMs;
+                _packetMsSum += count * 1000.0 / _captureFormat.AverageBytesPerSecond;
+                _packets++;
                 _levelNext = (_levelNext + 1) % _levels.Length;
                 if (_levelCount < _levels.Length) _levelCount++;
                 if (preTrimMs > _maxBuffered) _maxBuffered = preTrimMs;
@@ -114,8 +118,9 @@ namespace Framejet.Platform.Audio
             {
                 var level = TimingStats.From(new ArraySegment<double>(_levels, 0, _levelCount));
                 var s = new AudioStats { BytesCaptured = _bytes, Peak = _peak, BufferedMs = _buffered, MaxBufferedMs = _maxBuffered, Trims = _trimmer.Trims - _trimsBase,
+                    PacketMeanMs = _packets == 0 ? 0 : _packetMsSum / _packets,
                     Delay = new AudioDelay { BufferMeanMs = level.MeanMs, BufferP95Ms = level.P95Ms } };
-                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _trimmer.Trims; _levelCount = 0; _levelNext = 0; }
+                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _trimmer.Trims; _levelCount = 0; _levelNext = 0; _packetMsSum = 0; _packets = 0; }
                 return s;
             }
         }

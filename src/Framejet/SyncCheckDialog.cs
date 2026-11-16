@@ -72,10 +72,12 @@ namespace Framejet
             if (!_canStart())
             {
                 _text.Text = UiText.SyncSourceStopped;
+                AcceptButton = _start;
                 return;
             }
             _start.Enabled = false;
             _close.Text = "Cancel";
+            AcceptButton = null; // Enter must not cancel a running check; Esc still does
             try
             {
                 _check.Start();
@@ -85,6 +87,7 @@ namespace Framejet
                 _log.Error("The A/V sync check couldn't start", ex);
                 _text.Text = UiText.SyncSourceStopped;
                 _start.Enabled = true;
+                AcceptButton = _start;
             }
         }
 

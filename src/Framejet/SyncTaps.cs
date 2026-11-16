@@ -39,9 +39,21 @@ namespace Framejet
                 _collecting = true;
             }
             _measureBefore = _video.MeasureLatency; // the self-test may already have it on
-            _video.MeasureLatency = true;
-            _video.ArrivalLumaTap = OnFrame;
-            _audio.BlockPeakTap = OnBlock;
+            try
+            {
+                _video.MeasureLatency = true;
+                _video.ArrivalLumaTap = OnFrame;
+                _audio.BlockPeakTap = OnBlock;
+            }
+            catch
+            {
+                // Undo whatever was applied, so a failed start leaves no tap or measurement running.
+                lock (_gate) _collecting = false;
+                try { _audio.BlockPeakTap = null; } catch (Exception) { }
+                try { _video.ArrivalLumaTap = null; } catch (Exception) { }
+                try { _video.MeasureLatency = _measureBefore; } catch (Exception) { }
+                throw;
+            }
         }
 
         public (IReadOnlyList<(long Ticks, double Luma)> Frames, IReadOnlyList<(long Ticks, float Peak)> Audio, double AudioDelayMs, double PictureDelayMs) End()

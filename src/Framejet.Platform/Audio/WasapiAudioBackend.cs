@@ -159,7 +159,7 @@ namespace Framejet.Platform.Audio
             CaptureIngest _ingest;
             UnderrunCountingProvider _underruns;
             OutputPaddingSampler _padding;
-            double _captureMs, _periodMs, _outStreamMs;
+            double _captureStreamMs, _periodMs, _outStreamMs;
             int _underrunBase;
             volatile bool _disposed;
 
@@ -218,7 +218,9 @@ namespace Framejet.Platform.Audio
             {
                 var s = _ingest.Snapshot(reset);
                 var d = s.Delay;
-                d.CaptureMs = _captureMs;
+                // Capture part: the capture stream's latency plus the packet just delivered (its mean measured
+                // length; the buffer duration until one arrives). The buffer part counts only what was waiting before it.
+                d.CaptureMs = _captureStreamMs + (s.PacketMeanMs > 0 ? s.PacketMeanMs : CaptureBufferMs);
                 d.OutputMs = _outStreamMs + _padding.MeanPaddingMs(reset);
                 d.Mode = "normal";
                 d.PeriodMs = _periodMs;
@@ -230,13 +232,19 @@ namespace Framejet.Platform.Audio
 
             // NAudio keeps the audio clients it initialised private, and a client taken from the device is a fresh,
             // uninitialised one that has no stream latency. So read the live clients by reflection; if that fails
-            // (a different NAudio), fall back to the buffer durations passed to the constructors.
+            // (a different NAudio), fall back to the buffer durations passed to the constructors (for capture, no
+            // stream latency beyond the measured packet). Both figures are read before any is kept, so a partial failure
+            // can't leave a live figure labelled "fallback".
             void ReadCaptureClient()
             {
-                _captureMs = CaptureBufferMs;
+                _captureStreamMs = 0;
                 var c = LiveClient(_capture, "audioClient");
                 if (c == null) return;
-                try { _captureMs += c.StreamLatency / 10000.0; _periodMs = c.DefaultDevicePeriod / 10000.0; _captureSource = "live client"; }
+                try
+                {
+                    double stream = c.StreamLatency / 10000.0, period = c.DefaultDevicePeriod / 10000.0;
+                    _captureStreamMs = stream; _periodMs = period; _captureSource = "live client";
+                }
                 catch (Exception ex) { _owner._log.Error("Capture latency unreadable", ex); }
             }
 

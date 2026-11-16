@@ -69,22 +69,51 @@ namespace Framejet.Platform.Tests.Audio
         }
 
         [Fact]
-        public void Buffer_level_stats_cover_every_packet()
+        public void Buffer_level_stats_cover_every_packet_and_count_what_was_waiting_before_it()
         {
             var ingest = Make(out var buf, out _);
             for (int i = 0; i < 100; i++)
+            {
+                buf.ClearBuffer();
+                int waiting = i % 2 == 0 ? 2 : 4;
+                buf.AddSamples(Chunk(waiting), 0, 48 * waiting * 8);
+                ingest.Process(Chunk(10), 48 * 10 * 8);
+            }
+
+            var d = ingest.Snapshot(false).Delay;
+            Assert.InRange(d.BufferMeanMs, 2.5, 3.5);
+            Assert.InRange(d.BufferP95Ms, 3.5, 4.5);
+
+            ingest.Snapshot(true);
+            Assert.Equal(0, ingest.Snapshot(false).Delay.BufferMeanMs);
+        }
+
+        [Fact]
+        public void Buffer_level_sample_is_the_level_before_the_packet_is_added()
+        {
+            var ingest = Make(out var buf, out _);
+            buf.AddSamples(Chunk(3), 0, 48 * 3 * 8);
+            ingest.Process(Chunk(10), 48 * 10 * 8);
+
+            var s = ingest.Snapshot(false);
+            Assert.Equal(3.0, s.Delay.BufferMeanMs, 3);
+            Assert.Equal(13.0, s.BufferedMs, 3);    // the older figures stay post-add
+            Assert.Equal(13.0, s.MaxBufferedMs, 3);
+        }
+
+        [Fact]
+        public void Packet_length_is_the_mean_duration_of_the_packets_delivered()
+        {
+            var ingest = Make(out var buf, out _);
+            for (int i = 0; i < 10; i++)
             {
                 buf.ClearBuffer();
                 int ms = i % 2 == 0 ? 10 : 12;
                 ingest.Process(Chunk(ms), 48 * ms * 8);
             }
 
-            var d = ingest.Snapshot(false).Delay;
-            Assert.InRange(d.BufferMeanMs, 10.5, 11.5);
-            Assert.InRange(d.BufferP95Ms, 11.5, 12.5);
-
-            ingest.Snapshot(true);
-            Assert.Equal(0, ingest.Snapshot(false).Delay.BufferMeanMs);
+            Assert.Equal(11.0, ingest.Snapshot(true).PacketMeanMs, 3);
+            Assert.Equal(0, ingest.Snapshot(false).PacketMeanMs);
         }
     }
 }
