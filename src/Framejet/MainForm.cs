@@ -201,6 +201,15 @@ namespace Framejet
             _toolbar?.RefreshToggles(); // from the menu as well as from the toolbar
         }
 
+        /// <summary>The Never skip frames menu item: in the settings and the running presenter.</summary>
+        public void ToggleNeverSkipFrames()
+        {
+            if (_closed) return;
+            Settings.NeverSkipFrames = !Settings.NeverSkipFrames;
+            if (VideoBackend != null) VideoBackend.NeverSkipFrames = Settings.NeverSkipFrames;
+            SaveSettings();
+        }
+
         /// <summary>User-initiated rescan: also takes the card back after another app took it.</summary>
         public void RescanDevices()
         {

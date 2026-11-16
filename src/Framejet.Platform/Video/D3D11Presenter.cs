@@ -137,8 +137,8 @@ namespace Framejet.Platform.Video
         public bool VSync { get => _vsync; set => _vsync = value; }
 
         /// <summary>
-        /// With V-Sync On: true waits for every frame's turn; false skips a frame when the display queue is still busy
-        /// 4 ms later, so one missed refresh doesn't hold every later frame back a refresh.
+        /// With V-Sync On: true never skips, waiting up to 1 s for a display-queue slot (a frame is skipped only after that);
+        /// false (the default) skips a frame when the queue stays busy for 4 ms, so one missed refresh doesn't hold every later frame back a refresh.
         /// </summary>
         public bool NeverSkipFrames { get => _neverSkip; set => _neverSkip = value; }
 
