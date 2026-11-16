@@ -79,7 +79,10 @@ Approach 1 failed its measuring gate. A per-frame trace on the 60 Hz screen foun
 
 **Must-pass 9's mean bar (Claude's call; the owner can object).**
 - The old mean bar, half a refresh + 1.5 ms, assumed no latch deadline. It can't be met at 60 Hz: the ~3–4 ms deadline alone adds that much to the mean.
-- The mean bar becomes **half a refresh + 4 ms**: 12.3 ms at 60 Hz, 7.0 ms at 165 Hz.
+- The mean bar becomes **half a refresh + 5.5 ms**: 13.8 ms at 60 Hz, 8.5 ms at 165 Hz.
+  - That is the measured ~4 ms latch deadline plus the old bar's 1.5 ms slack. With a deadline D, frames presented less than D before a refresh show one refresh later, so the expected mean is exactly half a refresh + D.
+  - A first try at half a refresh + 4 ms, with no slack, was missed by 0.1 ms in 2 of 3 runs (12.44 and 12.46 ms). A 15 s run covers less than one 16.7 s beat, so the phases it samples vary.
+  - The old 30 ms backlog still fails this bar by a wide margin.
 - The p95 bar is unchanged (one refresh + 1.5 ms), and it still catches a frame waiting an extra refresh.
 
 **Known risk, not fixed here.** In a few runs, a skip was followed by a display stall: 33 ms usually, once ~120 ms. The flip really didn't retire, and the presentation mode didn't change. This happened about once per 30 s at 60 Hz. The suspected cause is adaptive sync on that monitor, which is unconfirmed. Never skip frames avoids it. Turning adaptive sync off for the monitor would confirm or rule it out.
