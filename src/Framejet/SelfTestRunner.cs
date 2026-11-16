@@ -63,6 +63,7 @@ namespace Framejet
             _started = true;
             _startedAt = DateTime.Now;
             _form.Settings.VSync = true;
+            _form.Settings.Scaling = ScalingMode.Fill;
             _form.Settings.Muted = true;
             Environment.ExitCode = 1; // until it passes: a run that never finishes must not look like a pass
             _form.TopMost = true;     // measure the picture as it is seen: in front, not covered by another window

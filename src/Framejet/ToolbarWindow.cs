@@ -40,13 +40,13 @@ namespace Framejet
         readonly Timer _fade = new Timer { Interval = 15 };
         readonly Stopwatch _fadeClock = new Stopwatch();
         readonly Font _glyphFont = new Font("Segoe UI Symbol", 10f);
-        readonly ComboBox _devices, _modes, _outputs;
+        readonly ComboBox _devices, _modes, _scaling, _outputs;
         readonly Button _rescan, _mute, _vsync, _fullscreen, _update;
         readonly DarkSlider _volume;
         readonly Panel _separatorA, _separatorB;
         readonly Label _status;
         readonly List<Control> _items; // left to right, the status label last
-        string _deviceKeys, _modeKeys, _outputKeys;
+        string _deviceKeys, _modeKeys, _scalingKeys, _outputKeys;
         List<Entry> _outputEntries = new List<Entry> { new Entry("", UiText.DefaultOutput, null) };
         bool _outputsListed = true;
         double _target;
@@ -68,6 +68,7 @@ namespace Framejet
 
             _devices = Combo(150);
             _modes = Combo(150);
+            _scaling = Combo(165); // fits "Whole steps (smooth)"
             _rescan = GlyphButton(RescanGlyph);
             _separatorA = Separator();
             _outputs = Combo(170);
@@ -85,7 +86,7 @@ namespace Framejet
                 AutoEllipsis = true,
                 UseMnemonic = false,
             };
-            _items = new List<Control> { _devices, _modes, _rescan, _separatorA, _outputs, _mute, _volume, _separatorB, _vsync, _fullscreen, _status };
+            _items = new List<Control> { _devices, _modes, _scaling, _rescan, _separatorA, _outputs, _mute, _volume, _separatorB, _vsync, _fullscreen, _status };
             StyleButton(_vsync, false);
             Controls.AddRange(_items.ToArray());
             // The update pill is not in _items: it sits at the right end and only takes room from the status text.
@@ -98,18 +99,20 @@ namespace Framejet
             Controls.Add(_update);
             _update.BringToFront(); // above the status label, which can reach it
 
+            _tips.SetToolTip(_scaling, UiText.ScalingMenu);
             _tips.SetToolTip(_rescan, "Rescan devices");
             _tips.SetToolTip(_mute, "Mute (M)");
             _tips.SetToolTip(_volume, "Volume");
             _tips.SetToolTip(_fullscreen, "Fullscreen (F11)");
 
-            foreach (var combo in new[] { _devices, _modes, _outputs })
+            foreach (var combo in new[] { _devices, _modes, _scaling, _outputs })
             {
                 combo.DropDown += (s, e) => { _openDropDowns++; UpdateHeld(); };
                 combo.DropDownClosed += (s, e) => { _openDropDowns = Math.Max(0, _openDropDowns - 1); UpdateHover(); }; // the pointer may still be over the toolbar
             }
             _devices.SelectionChangeCommitted += (s, e) => OnDeviceCommitted();
             _modes.SelectionChangeCommitted += (s, e) => OnModeCommitted();
+            _scaling.SelectionChangeCommitted += (s, e) => OnScalingCommitted();
             _outputs.SelectionChangeCommitted += (s, e) => OnOutputCommitted();
             _rescan.Click += (s, e) => _owner.RescanDevices();
             _mute.Click += (s, e) => _owner.Audio?.SetMuted(!_owner.Settings.Muted);
@@ -280,6 +283,8 @@ namespace Framejet
             var modes = video?.Modes ?? new List<VideoMode>();
             Fill(_modes, ref _modeKeys, modes.Select(m => new Entry(m.Key, m.Label, m)).ToList(),
                 e => video.Mode != null && ((VideoMode)e.Value).Key == video.Mode.Key);
+            Fill(_scaling, ref _scalingKeys, Scaling.All.Select(m => new Entry(Scaling.Key(m), UiText.ScalingLabel(m), m)).ToList(),
+                e => (ScalingMode)e.Value == _owner.Settings.Scaling);
         }
 
         bool CurrentOutputListed(AudioSession audio)
@@ -359,6 +364,12 @@ namespace Framejet
             if (_refreshing) return;
             if (_modes.SelectedItem is Entry entry && _owner.Video != null) _owner.Video.SelectMode((VideoMode)entry.Value);
             RefreshContent();
+        }
+
+        void OnScalingCommitted()
+        {
+            if (_refreshing) return;
+            if (_scaling.SelectedItem is Entry entry) _owner.SetScaling((ScalingMode)entry.Value);
         }
 
         void OnOutputCommitted()
