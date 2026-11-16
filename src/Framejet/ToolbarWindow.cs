@@ -439,7 +439,8 @@ namespace Framejet
         {
             if (_items == null) return;
             var scale = DpiScale;
-            var widths = new[] { 150, 150, 28, 0, 170, 28, 80, 0, 56, 28 };
+            var widths = new[] { 150, 150, 165, 28, 0, 170, 28, 80, 0, 56, 28 };
+            Debug.Assert(widths.Length == _items.Count - 1, "one width per item except the status, which takes the rest");
             int x = Px(PadPx), gap = Px(GapPx), height = Px(ControlHeightPx), top = (ClientSize.Height - height) / 2;
             for (int i = 0; i < widths.Length; i++)
             {

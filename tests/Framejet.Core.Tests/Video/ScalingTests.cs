@@ -27,6 +27,13 @@ namespace Framejet.Core.Tests.Video
         [Theory, MemberData(nameof(AllModes))]
         public void Place_with_no_area_does_not_throw(ScalingMode mode) { Scaling.Place(1920, 1080, 0, 0, mode); }
 
+        [Theory, MemberData(nameof(AllModes))]
+        public void Place_with_an_empty_source_is_empty(ScalingMode mode)
+        {
+            Assert.Equal(Rectangle.Empty, Scaling.Place(0, 0, 2560, 1440, mode));
+            Assert.Equal(Rectangle.Empty, Scaling.Place(0, 720, 2560, 1440, mode));
+        }
+
         [Theory] // mode, box w, box h, expected (source 1280x720)
         [InlineData(ScalingMode.Fill,             2560, 1440, ScaleFilter.CatmullRom)]
         [InlineData(ScalingMode.WholeStepsSmooth, 2560, 1440, ScaleFilter.CatmullRom)]

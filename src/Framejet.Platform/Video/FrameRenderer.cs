@@ -174,7 +174,7 @@ namespace Framejet.Platform.Video
             _context.PixelShader.Set(_convert);
             _context.Draw(3, 0);
 
-            // 2. Clear the target black, 3. fit the picture's aspect ratio, 4. scale into that box.
+            // 2. Clear the target black, 3. place the picture by the Scaling choice (Fill letterboxes, whole steps and 1:1 add bars, 1:1 may crop), 4. scale into that box.
             _context.OutputMerger.SetRenderTargets(target);
             _context.ClearRenderTargetView(target, Black);
             var box = Framejet.Core.Video.Scaling.Place(w, h, targetWidth, targetHeight, scaling);

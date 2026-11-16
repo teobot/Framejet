@@ -208,7 +208,7 @@ namespace Framejet
             Settings.Scaling = mode;
             if (VideoBackend != null) VideoBackend.Scaling = mode;
             SaveSettings();
-            _toolbar?.RefreshContent();
+            _toolbar?.RefreshContent(false);
         }
 
         /// <summary>User-initiated rescan: also takes the card back after another app took it.</summary>

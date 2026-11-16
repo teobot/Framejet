@@ -18,6 +18,7 @@ namespace Framejet.Core.Video
         /// <summary>Where the picture goes in the target. The box may be larger than the target (1:1 crops, centred).</summary>
         public static Rectangle Place(int sourceWidth, int sourceHeight, int targetWidth, int targetHeight, ScalingMode mode)
         {
+            if (sourceWidth <= 0 || sourceHeight <= 0) return Rectangle.Empty;
             switch (mode)
             {
                 case ScalingMode.WholeStepsCrisp:
