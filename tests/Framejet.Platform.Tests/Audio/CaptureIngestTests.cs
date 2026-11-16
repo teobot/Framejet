@@ -84,6 +84,28 @@ namespace Framejet.Platform.Tests.Audio
         }
 
         [Fact]
+        public void Counted_underruns_are_reported_only_after_settling_and_while_capture_delivers()
+        {
+            long now = 1, ms = System.Diagnostics.Stopwatch.Frequency / 1000;
+            var ingest = Make(out var buf, out _, () => now);
+            var counted = new System.Collections.Generic.List<long>();
+            ingest.CountedUnderrun = t => counted.Add(t);
+            var read = new byte[48 * 40 * 8];
+            ingest.Process(Chunk(10), 48 * 10 * 8);
+            ingest.Output.Read(read, 0, 48 * 20 * 8); // start-up catch-up read: inside the settle time
+            Assert.Equal(1, ingest.Underruns);
+            Assert.Empty(counted);
+
+            for (int i = 0; i < 510; i++) { now += 10 * ms; buf.ClearBuffer(); ingest.Process(Chunk(10), 48 * 10 * 8); }
+            ingest.Output.Read(read, 0, 48 * 20 * 8);
+            Assert.Equal(new[] { now }, counted);
+
+            now += 150 * ms; // the card goes quiet: a silent card never counts
+            ingest.Output.Read(read, 0, read.Length);
+            Assert.Single(counted);
+        }
+
+        [Fact]
         public void Prefill_rearms_after_a_stall()
         {
             var ingest = Make(out var buf, out var drift);
@@ -157,6 +179,39 @@ namespace Framejet.Platform.Tests.Audio
             Assert.Equal(0, r.Underruns);
             Assert.Equal(10, r.TargetMs);
             Assert.InRange(r.FinalMs, 10.0, 10.0 + DriftController.HoldBand.TotalMilliseconds + 0.25);
+        }
+
+        /// <summary>
+        /// Low-latency mode: 128-frame (2.67 ms) packets and 128-frame reads on one engine clock, through the real chain.
+        /// Every 7th period the packet lands after the read instead of before it.
+        /// </summary>
+        [Fact]
+        public void Short_periods_hold_the_10ms_target_without_underruns()
+        {
+            long now = 1;
+            var fmt = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
+            var buf = new BufferedWaveProvider(fmt) { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true, ReadFully = true };
+            var drift = new DriftController();
+            var ingest = new CaptureIngest(buf, fmt, drift, NullLog.Instance, () => now);
+            var chain = PlaythroughChain.ToWaveProvider(PlaythroughChain.Build(ingest.Output, fmt, out _, out var resampler), fmt);
+            ingest.Resampler = resampler;
+            long tick = System.Diagnostics.Stopwatch.Frequency * 128 / 48000;
+            var packet = new byte[128 * 8]; var read = new byte[128 * 8];
+            for (int i = 0; i < 128 * 2; i++) BitConverter.GetBytes(0.25f).CopyTo(packet, i * 4);
+            int steps = 60 * 48000 / 128;
+            for (int i = 0; i < steps; i++)
+            {
+                now += tick;
+                bool late = i % 7 == 0;
+                if (!late) ingest.Process(packet, packet.Length);
+                chain.Read(read, 0, read.Length);
+                if (late) ingest.Process(packet, packet.Length);
+            }
+            var d = ingest.Snapshot(false).Delay;
+            Assert.Equal(0, ingest.Underruns);
+            Assert.Equal(10, drift.Target.TotalMilliseconds);
+            Assert.InRange(d.BufferMeanMs, 9.5, 13.5);
+            Assert.InRange(d.BufferP95Ms, 9.5, 14.0);
         }
 
         [Fact]

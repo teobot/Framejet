@@ -49,6 +49,7 @@ namespace Framejet.Platform.Audio
         long _bytes; float _peak; double _buffered, _maxBuffered; int _trimsBase;
         volatile Action<long, float> _blockPeakTap;
         volatile VariableRateResampler _resampler;
+        volatile Action<long> _countedUnderrun;
         volatile bool _primed;
         long _lastPacket;        // Stopwatch time of the newest packet; written on the capture thread, read on the output thread
         long _primedAt;          // Stopwatch time the prefill gate last opened; same threads
@@ -75,6 +76,12 @@ namespace Framejet.Platform.Audio
 
         /// <summary>Receives the controller's ratio after each packet, from the capture thread.</summary>
         public VariableRateResampler Resampler { set => _resampler = value; }
+
+        /// <summary>
+        /// Called on the output thread, with the Stopwatch time, for each underrun that counts toward the target: one
+        /// after the settle time while capture is delivering. A silent card or start-up never calls it. It must return at once.
+        /// </summary>
+        public Action<long> CountedUnderrun { set => _countedUnderrun = value; }
 
         /// <summary>
         /// While set, called on the capture thread for each 1 ms block of every packet, with the block's peak and the
@@ -178,8 +185,11 @@ namespace Framejet.Platform.Audio
         // On the output thread.
         void OnUnderrun()
         {
-            bool settled = _clock() - Interlocked.Read(ref _primedAt) > SettleTicks;
-            if (settled && Delivering) Interlocked.Increment(ref _pendingUnderruns);
+            long now = _clock();
+            bool settled = now - Interlocked.Read(ref _primedAt) > SettleTicks;
+            if (!settled || !Delivering) return;
+            Interlocked.Increment(ref _pendingUnderruns);
+            _countedUnderrun?.Invoke(now);
         }
 
         /// <summary>

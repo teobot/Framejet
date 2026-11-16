@@ -16,6 +16,13 @@ namespace Framejet.Platform.Audio
         readonly int _channels, _inRate, _outRate;
         long _ratioBits = BitConverter.DoubleToInt64Bits(1.0);
         double _appliedRatio = 1.0; // touched only on the reading thread
+        int _rateChanges;
+
+        /// <summary>
+        /// A new ratio is applied only once it is this far from the one in use (or is exactly 1). When upsampling, each
+        /// change rebuilds the sinc table (0.2-1 ms), too much to spend on the controller's tiny jitter every period.
+        /// </summary>
+        public const double RatioStep = 2e-5;
 
         public VariableRateResampler(ISampleProvider source, int outputRate)
         {
@@ -45,13 +52,17 @@ namespace Framejet.Platform.Audio
             set => Interlocked.Exchange(ref _ratioBits, BitConverter.DoubleToInt64Bits(value));
         }
 
+        /// <summary>How many times a new ratio was applied; read it on the reading thread (tests).</summary>
+        internal int RateChanges => _rateChanges;
+
         public int Read(float[] buffer, int offset, int count)
         {
             double ratio = Ratio;
-            if (ratio != _appliedRatio)
+            if (ratio != _appliedRatio && (ratio == 1.0 || Math.Abs(ratio - _appliedRatio) >= RatioStep))
             {
                 _resampler.SetRates(_inRate * ratio, _outRate);
                 _appliedRatio = ratio;
+                _rateChanges++;
             }
 
             int frames = count / _channels;

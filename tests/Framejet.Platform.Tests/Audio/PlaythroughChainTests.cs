@@ -83,6 +83,22 @@ namespace Framejet.Platform.Tests.Audio
             Assert.True(min >= -0.5 && max <= 0.5, $"gain {min:0.00}..{max:0.00} dB vs input");
         }
 
+        // Each rate change rebuilds the sinc table when upsampling (0.2-1 ms), which a 2.67 ms period can't spare.
+        [Fact] public void Variable_resampler_ignores_ratio_jitter_below_its_step()
+        {
+            var src = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48000, 2)) { BufferDuration = TimeSpan.FromSeconds(2), ReadFully = true };
+            var r = new VariableRateResampler(src.ToSampleProvider(), 96000); var s = new float[256];
+            int Apply(double ratio) { r.Ratio = ratio; r.Read(s, 0, s.Length); return r.RateChanges; }
+            Assert.Equal(0, Apply(1.00001));
+            Assert.Equal(0, Apply(0.999985));
+            Assert.Equal(1, Apply(1.00003));
+            Assert.Equal(1, Apply(1.000045)); // within the step of the applied 1.00003
+            Assert.Equal(1, Apply(1.000015));
+            Assert.Equal(2, Apply(1.0)); // exact unity is always applied, so a held level gets exactly nominal speed
+            Assert.Equal(2, Apply(1.0));
+            Assert.Equal(3, Apply(0.99997));
+        }
+
         [Fact] public void Pcm16_converts_to_float()
         { var src = BitConverter.GetBytes((short)16384); var dst = new byte[4];
           Assert.Equal(4, PlaythroughChain.ToFloat(src, 2, new WaveFormat(48000, 16, 1), dst)); Assert.Equal(0.5, (double)BitConverter.ToSingle(dst, 0), 3); }

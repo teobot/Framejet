@@ -134,6 +134,8 @@ namespace Framejet
         public AudioSession Audio { get; private set; }
         public DirectShowVideoBackend VideoBackend { get; private set; }
         public WasapiAudioBackend AudioBackend { get; private set; }
+        // Endpoints that can't run low-latency audio, remembered for this run (never saved) so restarts don't retry them.
+        readonly LowLatencyRegistry _lowLatencyAudio = new LowLatencyRegistry();
         public AppSettings Settings { get; }
         public IScheduler Clock { get; }
         public NoSignalDetector NoSignal { get; }
@@ -314,7 +316,7 @@ namespace Framejet
         {
             _dispatcher = new ControlDispatcher(this);
             VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, Paused = WindowState == FormWindowState.Minimized };
-            AudioBackend = new WasapiAudioBackend(Log);
+            AudioBackend = new WasapiAudioBackend(Log, _lowLatencyAudio);
             try
             {
                 _watcher = new AudioDeviceWatcher(_dispatcher);
