@@ -47,3 +47,40 @@ V-Sync On is `Present(1)` with a frame-latency limit of 1. A frame presented whi
 ## Coordination
 
 Other sessions are also changing `D3D11Presenter`: live latency display, Vortice in place of SharpDX, and precompiled shaders. Expect merge conflicts in that file. The present call is the only line this change needs there, plus the new property.
+
+## Revision after measuring (2026-11-16): approach 2, with a bounded wait
+
+Approach 1 failed its measuring gate. A per-frame trace on the 60 Hz screen found the real cause, and the owner approved building the fix below ("Yes, build it"). The traces and numbers are in the session notes, not in the repo.
+
+**Cause (measured).** The card sends 59.940 fps and the screen refreshes at 60.000 Hz. A frame has to reach the display about 3–4 ms before a refresh to be shown at it (the display's latch deadline). When one frame misses that deadline, because of arrival jitter, a slow Present or an OS hiccup, it stays queued. Every later frame then queues behind it, one refresh late, and the render thread blocks in Present. Nothing drains that queue until the beat between the two rates (about 16.7 s) leaves a refresh with nothing new to show. `Present(0)` without tearing never replaces a queued frame in direct scanout; it blocks just like `Present(1)`. That's why approach 1 changed nothing. At 144 and 165 Hz a refresh with nothing new follows every frame, so the queue drains at once.
+
+**Fix.** The swap chain gets a frame-latency waitable object (`DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT`, maximum frame latency 1). It signals when the previously queued frame leaves the queue. Before each present:
+- **V-Sync On, default:**
+  - Wait up to **4 ms** for the object. If it signals, `Present(1)`.
+  - If it doesn't, skip this frame and count it as dropped. The queued frame shows at the next refresh, and the following frame lands on time, so the backlog is gone.
+  - A frame within 4 ms of the refresh it missed would land a refresh late anyway, whether it waits or skips. Waiting keeps the picture at 60 fps instead of juddering at 30 fps; skipping on every busy frame did judder (**Claude's call, from measurement**).
+- **V-Sync On, never skip:** wait (bounded at 1 s), then `Present(1)`. This is the old behaviour.
+- **V-Sync Off:** wait (bounded at 1 s), then present as before (`Present(0, ALLOW_TEARING)` when supported).
+- If a 1 s wait ever times out, present anyway.
+
+**Measured with a throwaway version, 60 Hz fullscreen, 15 s runs.**
+- Arrival → screen: 12.1–13.2 ms mean, 18.9–20.7 p95. Before, a run was either ~14 or ~30+ ms.
+- 1–5% of frames skipped, at most 25% in any 1 s window.
+- Windowed (composed) never skipped.
+- 144 and 165 Hz were no worse.
+
+**Measurement (Claude's call).**
+- Arrival → Present measures Framejet's own work: arrival to the start of the queue wait.
+- The queue wait is reported separately as its own timing.
+- Present → screen is measured from the Present call.
+
+**Must-pass 9's mean bar (Claude's call; the owner can object).**
+- The old mean bar, half a refresh + 1.5 ms, assumed no latch deadline. It can't be met at 60 Hz: the ~3–4 ms deadline alone adds that much to the mean.
+- The mean bar becomes **half a refresh + 4 ms**: 12.3 ms at 60 Hz, 7.0 ms at 165 Hz.
+- The p95 bar is unchanged (one refresh + 1.5 ms), and it still catches a frame waiting an extra refresh.
+
+**Known risk, not fixed here.** In a few runs, a skip was followed by a display stall: 33 ms usually, once ~120 ms. The flip really didn't retire, and the presentation mode didn't change. This happened about once per 30 s at 60 Hz. The suspected cause is adaptive sync on that monitor, which is unconfirmed. Never skip frames avoids it. Turning adaptive sync off for the monitor would confirm or rule it out.
+
+**Separate finding (follow-up, not this work).** Over 15 s runs at 144 Hz, Present → screen p95 is ~10.4 ms even with the original presenter, against an 8.44 ms bar. The earlier 4 s pass was luck.
+
+Approach 1's code (`Present(0)` for V-Sync On and the replaced-frame count) is removed. The setting, menu and docs parts of the design stand.
