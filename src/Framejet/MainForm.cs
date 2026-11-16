@@ -139,6 +139,15 @@ namespace Framejet
         /// <summary>The right-click menu; also shown by the toolbar.</summary>
         public ContextMenuStrip VideoContextMenu => _menu;
 
+        /// <summary>How the picture is drawn in the video area: "1:1" pixel for pixel, or a percentage. Null with no mode or no area.</summary>
+        public string PictureScale => Video?.Mode == null ? null : StatusText.Scale(Video.Mode.Width, Video.Mode.Height, _surface.VideoSize);
+
+        /// <summary>
+        /// The status without warnings, such as "1440p · 59.9 fps · 1:1", while video runs; otherwise null. The right-click
+        /// menu shows it, so it can be read in fullscreen, where the toolbar never shows.
+        /// </summary>
+        public string PictureStatus => Video?.State == VideoState.Running ? StatusText.Format(Video.Mode, VideoBackend?.MeasuredFps ?? 0, _surface.VideoSize, null) : null;
+
         public IReadOnlyList<ScreenInfo> Screens()
             => Screen.AllScreens.Select(s => new ScreenInfo(s.DeviceName, s.Bounds, s.WorkingArea, s.Primary)).ToList();
 
@@ -420,7 +429,7 @@ namespace Framejet
             _warnings.Clear();
             _warnings.AddRange(warnings);
             var fps = VideoBackend != null ? VideoBackend.MeasuredFps : 0; // not GetStats: it allocates ~150 KB, and the GCs pause the render thread
-            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, warnings));
+            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, _surface.VideoSize, warnings));
         }
 
         /// <summary>
