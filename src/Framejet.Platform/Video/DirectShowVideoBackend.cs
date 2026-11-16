@@ -32,6 +32,7 @@ namespace Framejet.Platform.Video
         object _streamConfig;
         ISampleGrabber _grabber;
         GrabberCallback _callback; // the grabber holds it only through COM, so keep it reachable here
+        Action<long, double> _arrivalLumaTap;
         GraphEventWindow _eventWindow;
         D3D11Presenter _presenter;
         bool _videoShown;
@@ -78,6 +79,16 @@ namespace Framejet.Platform.Video
         {
             get => _measureLatency;
             set { _measureLatency = value; if (_presenter != null) _presenter.MeasureLatency = value; }
+        }
+
+        /// <summary>
+        /// While set, called on DirectShow's streaming thread for every frame that arrives, with its arrival stamp (the
+        /// one the presenter gets) and its mean luma. It must return at once and never touch the UI. It carries over to
+        /// later starts until it is set back to null.
+        /// </summary>
+        public Action<long, double> ArrivalLumaTap
+        {
+            set { _arrivalLumaTap = value; if (_callback != null) _callback.LumaTap = value; }
         }
 
         /// <summary>The frames the running graph delivers; null when stopped.</summary>
@@ -189,7 +200,7 @@ namespace Framejet.Platform.Video
                 step = "set up the sample grabber";
                 Check(_grabber.SetBufferSamples(false), device, step);
                 Check(_grabber.SetOneShot(false), device, step);
-                _callback = new GrabberCallback(slot, _log);
+                _callback = new GrabberCallback(slot, format, _log) { LumaTap = _arrivalLumaTap };
                 Check(_grabber.SetCallback(_callback, 1), device, step);
 
                 // 7. No reference clock, so each frame is delivered the moment it arrives. Graph events go to the UI thread.
@@ -269,6 +280,7 @@ namespace Framejet.Platform.Video
                 window.DeviceTaken -= OnGraphDeviceTaken;
                 Quietly("close the graph event window", window.Dispose);
             }
+            if (callback != null) callback.LumaTap = null;
             if (grabber != null) Quietly("detach the frame callback", () => grabber.SetCallback(null, 0));
             GC.KeepAlive(callback); // the grabber held it only through COM, until the detach
 

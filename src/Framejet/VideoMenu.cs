@@ -57,6 +57,7 @@ namespace Framejet
             menu.Items.Add(Outputs(form));
             menu.Items.Add(Inputs(form));
             menu.Items.Add(Item("Rescan devices", false, form.RescanDevices));
+            menu.Items.Add(new ToolStripMenuItem(UiText.SyncMenu, null, (s, e) => form.CheckAvSync()) { Enabled = form.CanCheckSync });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(Item("Exit", false, form.Close));
             Style(menu.Items);

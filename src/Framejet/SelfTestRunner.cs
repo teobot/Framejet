@@ -253,6 +253,7 @@ namespace Framejet
             Line("picture brightness: " + Brightness());
             Line("no signal: " + (_form.NoSignal.NoSignal ? "yes" : "no"));
             Line(Invariant($"audio: bytes={audio.BytesCaptured} peak={audio.Peak:0.00} buffer={audio.BufferedMs:0.0} ms max={audio.MaxBufferedMs:0.0} ms trims={audio.Trims}"));
+            Line(audio.Delay.Mode == null ? "audio delay: none" : audio.Delay.ReportLine());
             Line("toolbar: " + (_toolbarState ?? "not measured"));
             Line("menu: " + string.Join(" | ", VideoMenu.TopLevelTexts(_form.VideoContextMenu)));
             Line("errors: " + Errors());

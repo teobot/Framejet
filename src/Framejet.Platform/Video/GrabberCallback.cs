@@ -15,14 +15,23 @@ namespace Framejet.Platform.Video
     internal sealed class GrabberCallback : ISampleGrabberCB
     {
         readonly LatestFrameSlot _slot;
+        readonly CaptureFormat _format;
         readonly ILog _log;
+        volatile Action<long, double> _lumaTap;
         bool _mismatchLogged;
 
-        public GrabberCallback(LatestFrameSlot slot, ILog log)
+        public GrabberCallback(LatestFrameSlot slot, CaptureFormat format, ILog log)
         {
             _slot = slot ?? throw new ArgumentNullException(nameof(slot));
+            _format = format ?? throw new ArgumentNullException(nameof(format));
             _log = log ?? throw new ArgumentNullException(nameof(log));
         }
+
+        /// <summary>
+        /// While set, called on the streaming thread with each frame's arrival stamp and mean luma, after the frame is
+        /// handed over. It must return at once.
+        /// </summary>
+        public Action<long, double> LumaTap { set => _lumaTap = value; }
 
         /// <summary>Unused, since the grabber is set to call <see cref="BufferCB"/>; releases the sample it was given.</summary>
         public int SampleCB(double sampleTime, IMediaSample sample)
@@ -33,7 +42,9 @@ namespace Framejet.Platform.Video
 
         public int BufferCB(double sampleTime, IntPtr buffer, int bufferLength)
         {
-            _slot.Publish(buffer, bufferLength, Stopwatch.GetTimestamp());
+            long arrived = Stopwatch.GetTimestamp();
+            _slot.Publish(buffer, bufferLength, arrived);
+            _lumaTap?.Invoke(arrived, LumaSampler.Mean(buffer, bufferLength, _format));
             if (bufferLength != _slot.FrameBytes && !_mismatchLogged)
             {
                 // Once per start, after the frame is handed over so it is not delayed; the stats line counts the rest.

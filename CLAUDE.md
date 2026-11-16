@@ -73,6 +73,10 @@ Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queue
 - Capture is shared-mode and event-driven. It feeds `LatencyTrimmer`, which targets 15 ms and trims above 60 ms.
 - Framejet's own channel mapper and resampler come next. The default output can be, for example, 8-channel 96 kHz float.
 - `WasapiOut` then plays to the Windows default output, which it follows live, or to a chosen output.
+- Framejet's own audio delay is measured at 22–32 ms (`docs/design.md` §4.5):
+  - The self-test prints it as `audio delay:`.
+  - The live client latencies are read from NAudio's private `audioClient` fields by reflection, and the log names their source.
+  - The right-click **Check A/V sync…** (`SyncCheck`, `SyncAnalyzer`, `SyncTaps`) measures the full gap using a PS5 sync video.
 
 ### Resilience (spec §4.7)
 

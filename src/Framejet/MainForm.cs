@@ -56,6 +56,7 @@ namespace Framejet
         readonly ScreenInfo _startFullscreenOn;
         ControlDispatcher _dispatcher;
         AudioDeviceWatcher _watcher;
+        SyncCheck _syncCheck; // while the A/V sync dialog is open
         string _runningKey;
         Rectangle _normalBounds;
         FormWindowState _normalState;
@@ -218,6 +219,26 @@ namespace Framejet
             Video.Rescan();
             _audioDevicesDirty = true;
             Audio.DevicesChanged();
+        }
+
+        /// <summary>The A/V sync check needs both the picture and the sound running.</summary>
+        public bool CanCheckSync => !_closed && Video?.State == VideoState.Running && AudioBackend?.IsRunning == true;
+
+        /// <summary>The Check A/V sync menu item: a modal dialog that runs the check and shows its result.</summary>
+        public void CheckAvSync()
+        {
+            if (!CanCheckSync || _syncCheck != null) return;
+            var check = new SyncCheck(new SyncTaps(VideoBackend, AudioBackend), Clock, Stopwatch.Frequency);
+            check.Finished += (headline, split) => Log.Info("A/V sync check: " + headline + (split == null ? "" : " (" + split + ")"));
+            _syncCheck = check;
+            try
+            {
+                using (var dialog = new SyncCheckDialog(check, () => CanCheckSync, Log)) dialog.ShowDialog(this);
+            }
+            finally
+            {
+                _syncCheck = null;
+            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -413,6 +434,7 @@ namespace Framejet
         void OnAudioChanged()
         {
             if (_closed) return;
+            if (AudioBackend?.IsRunning != true) _syncCheck?.SourceStopped();
             var devices = _audioDevicesDirty;
             _audioDevicesDirty = false;
             _toolbar?.RefreshContent(devices); // a volume or mute change does not list the outputs again
@@ -431,6 +453,8 @@ namespace Framejet
             var key = running ? Video.Device.Path + "|" + Video.Mode?.Key : null;
             if (key != null && key != _runningKey) NoSignal.Reset();
             _runningKey = key;
+
+            if (!running) _syncCheck?.SourceStopped();
 
             var audioTimer = Stopwatch.StartNew();
             Audio.Follow(running ? Video.Device : null, running ? DeviceContainers.ForDirectShowDevicePath(Video.Device.Path) : Guid.Empty);

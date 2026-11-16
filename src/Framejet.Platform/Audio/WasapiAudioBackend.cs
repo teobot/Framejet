@@ -16,6 +16,7 @@ namespace Framejet.Platform.Audio
         readonly ILog _log;
         readonly object _sync = new object();
         Session _session;
+        volatile Action<long, float> _blockPeakTap;
 
         public WasapiAudioBackend(ILog log) { _log = log ?? NullLog.Instance; }
 
@@ -105,6 +106,21 @@ namespace Framejet.Platform.Audio
             catch (Exception ex) { _log.Error("Audio stop failed", ex); }
         }
 
+        /// <summary>
+        /// While set, called on the capture thread for each 1 ms block of captured sound with its capture stamp and peak.
+        /// It must return at once and never touch the UI. It carries over to later starts until it is set back to null.
+        /// </summary>
+        public Action<long, float> BlockPeakTap
+        {
+            set
+            {
+                _blockPeakTap = value;
+                Session s;
+                lock (_sync) s = _session;
+                s?.SetBlockPeakTap(value);
+            }
+        }
+
         public AudioStats GetStats(bool reset)
         {
             Session s;
@@ -141,7 +157,14 @@ namespace Framejet.Platform.Audio
             BufferedWaveProvider _buffer;
             WaveFormat _captureFormat;
             CaptureIngest _ingest;
+            UnderrunCountingProvider _underruns;
+            OutputPaddingSampler _padding;
+            double _captureStreamMs, _periodMs, _outStreamMs;
+            int _underrunBase;
             volatile bool _disposed;
+
+            const int CaptureBufferMs = 10, OutputLatencyMs = 20;
+            string _captureSource = "fallback", _outputSource = "fallback";
 
             public VolumeSampleProvider Volume { get; private set; }
 
@@ -153,7 +176,7 @@ namespace Framejet.Platform.Audio
                 _inDevice = _enumerator.GetDevice(inputId);
                 _outDevice = _enumerator.GetDevice(outputId);
 
-                _capture = new WasapiCapture(_inDevice, true, 10);
+                _capture = new WasapiCapture(_inDevice, true, CaptureBufferMs);
                 _captureFormat = _capture.WaveFormat;
                 _buffer = new BufferedWaveProvider(PlaythroughChain.FloatFormatFor(_captureFormat))
                 {
@@ -161,29 +184,88 @@ namespace Framejet.Platform.Audio
                     DiscardOnBufferOverflow = true,
                     ReadFully = true
                 };
-                _ingest = new CaptureIngest(_buffer, _captureFormat, new LatencyTrimmer(LatencyTrimmer.DefaultTarget, LatencyTrimmer.DefaultTrimAbove));
+                _ingest = new CaptureIngest(_buffer, _captureFormat, new LatencyTrimmer(LatencyTrimmer.DefaultTarget, LatencyTrimmer.DefaultTrimAbove))
+                    { BlockPeakTap = _owner._blockPeakTap };
                 _capture.DataAvailable += (s, e) => { if (ReferenceEquals(s, _capture)) { if (!_disposed) _ingest.Process(e.Buffer, e.BytesRecorded); } };
                 _capture.RecordingStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _capture)) _owner.RaiseFailed(this, e.Exception.Message); };
 
-                _out = new WasapiOut(_outDevice, AudioClientShareMode.Shared, true, 20);
+                _out = new WasapiOut(_outDevice, AudioClientShareMode.Shared, true, OutputLatencyMs);
                 _out.PlaybackStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _out)) _owner.RaiseFailed(this, e.Exception.Message); };
 
                 VolumeSampleProvider volume;
                 WaveFormat mix;
                 using (var client = _outDevice.AudioClient) mix = client.MixFormat; // each AudioClient access activates a new client
-                var chain = PlaythroughChain.Build(_buffer, mix, out volume);
+                _underruns = new UnderrunCountingProvider(_buffer);
+                var chain = PlaythroughChain.Build(_underruns, mix, out volume);
                 Volume = volume;
                 volume.Volume = gain;
-                _out.Init(PlaythroughChain.ToWaveProvider(chain, mix));
+                _padding = new OutputPaddingSampler(PlaythroughChain.ToWaveProvider(chain, mix), mix.SampleRate);
+                _out.Init(_padding);
+                ReadOutputClient();
             }
 
             public void Begin()
             {
                 _out.Play();
                 _capture.StartRecording();
+                ReadCaptureClient();
+                _owner._log.Info("Audio delay figures: capture=" + _captureSource + ", output=" + _outputSource);
             }
 
-            public AudioStats Snapshot(bool reset) => _ingest.Snapshot(reset);
+            public void SetBlockPeakTap(Action<long, float> tap) => _ingest.BlockPeakTap = tap;
+
+            public AudioStats Snapshot(bool reset)
+            {
+                var s = _ingest.Snapshot(reset);
+                var d = s.Delay;
+                // Capture part: the capture stream's latency plus the packet just delivered (its mean measured
+                // length; the buffer duration until one arrives). The buffer part counts only what was waiting before it.
+                d.CaptureMs = _captureStreamMs + (s.PacketMeanMs > 0 ? s.PacketMeanMs : CaptureBufferMs);
+                d.OutputMs = _outStreamMs + _padding.MeanPaddingMs(reset);
+                d.Mode = "normal";
+                d.PeriodMs = _periodMs;
+                int u = _underruns.Underruns;
+                d.Underruns = u - _underrunBase;
+                if (reset) _underrunBase = u;
+                return s;
+            }
+
+            // NAudio keeps the audio clients it initialised private, and a client taken from the device is a fresh,
+            // uninitialised one that has no stream latency. So read the live clients by reflection; if that fails
+            // (a different NAudio), fall back to the buffer durations passed to the constructors (for capture, no
+            // stream latency beyond the measured packet). Both figures are read before any is kept, so a partial failure
+            // can't leave a live figure labelled "fallback".
+            void ReadCaptureClient()
+            {
+                _captureStreamMs = 0;
+                var c = LiveClient(_capture, "audioClient");
+                if (c == null) return;
+                try
+                {
+                    double stream = c.StreamLatency / 10000.0, period = c.DefaultDevicePeriod / 10000.0;
+                    _captureStreamMs = stream; _periodMs = period; _captureSource = "live client";
+                }
+                catch (Exception ex) { _owner._log.Error("Capture latency unreadable", ex); }
+            }
+
+            void ReadOutputClient()
+            {
+                _outStreamMs = OutputLatencyMs;
+                var c = LiveClient(_out, "audioClient");
+                if (c == null) return;
+                _padding.Client = c;
+                try { _outStreamMs = c.StreamLatency / 10000.0; _outputSource = "live client"; }
+                catch (Exception ex) { _owner._log.Error("Output latency unreadable", ex); }
+            }
+
+            static AudioClient LiveClient(object owner, string field)
+            {
+                try
+                {
+                    return owner.GetType().GetField(field, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(owner) as AudioClient;
+                }
+                catch (Exception) { return null; }
+            }
 
             public void Dispose(ILog log)
             {
@@ -199,6 +281,46 @@ namespace Framejet.Platform.Audio
                 Try(log, () => _inDevice?.Dispose());
                 Try(log, () => _outDevice?.Dispose());
                 Try(log, () => _enumerator?.Dispose());
+            }
+
+            /// <summary>Wraps the output; on each read it samples the live client's CurrentPadding, the audio already queued for the device.</summary>
+            sealed class OutputPaddingSampler : IWaveProvider
+            {
+                readonly IWaveProvider _source;
+                readonly int _sampleRate;
+                readonly object _lock = new object();
+                double _sumMs; int _n;
+
+                public OutputPaddingSampler(IWaveProvider source, int sampleRate) { _source = source; _sampleRate = sampleRate; }
+
+                public AudioClient Client { get; set; }
+                public WaveFormat WaveFormat => _source.WaveFormat;
+
+                public int Read(byte[] buffer, int offset, int count)
+                {
+                    int got = _source.Read(buffer, offset, count);
+                    var c = Client;
+                    if (c != null)
+                    {
+                        try
+                        {
+                            double ms = c.CurrentPadding * 1000.0 / _sampleRate;
+                            lock (_lock) { _sumMs += ms; _n++; }
+                        }
+                        catch (Exception) { }
+                    }
+                    return got;
+                }
+
+                public double MeanPaddingMs(bool reset)
+                {
+                    lock (_lock)
+                    {
+                        double m = _n == 0 ? 0 : _sumMs / _n;
+                        if (reset) { _sumMs = 0; _n = 0; }
+                        return m;
+                    }
+                }
             }
 
             static void Try(ILog log, Action a)
