@@ -1,8 +1,8 @@
 using System.Collections.Generic;
-using Framejet.Platform.Video;
+using Framejet.Core.Video;
 using Xunit;
 
-namespace Framejet.Platform.Tests.Video
+namespace Framejet.Core.Tests.Video
 {
     public class LatencyWaiterTests
     {

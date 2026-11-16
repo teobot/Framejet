@@ -1,9 +1,9 @@
 using System;
 
-namespace Framejet.Platform.Video
+namespace Framejet.Core.Video
 {
     /// <summary>What a frame got from the display queue before its present.</summary>
-    internal enum QueueSlot
+    public enum QueueSlot
     {
         /// <summary>The frame holds a slot: present it.</summary>
         Taken,
@@ -19,7 +19,7 @@ namespace Framejet.Platform.Video
     /// leave a surplus that lifts the latency limit for good. A frame is therefore never presented without one, and a slot
     /// taken by a frame whose Present failed goes to the next frame. Render thread only.
     /// </summary>
-    internal sealed class LatencyWaiter
+    public sealed class LatencyWaiter
     {
         public const uint Signalled = 0; // WAIT_OBJECT_0; any other result is no slot
 
