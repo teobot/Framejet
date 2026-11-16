@@ -11,6 +11,7 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 using Framejet.Core;
 using Framejet.Core.Audio;
+using Framejet.Core.Diagnostics;
 using Framejet.Core.Settings;
 using Framejet.Core.Ui;
 using Framejet.Core.Timing;
@@ -35,6 +36,8 @@ namespace Framejet
         static readonly TimeSpan DefaultOutputChangeDelay = TimeSpan.FromMilliseconds(300);
         static readonly TimeSpan SaveDelay = TimeSpan.FromMilliseconds(500);
         const int StatsIntervalMs = 60000;
+        const int HealthIntervalMs = 1000; // dev builds: the playback health sample
+        const int DevLogKeepOld = 4, DevLogMaxBytes = 8 * 1024 * 1024; // dev builds keep 5 sessions of up to 8 MB
         const int CursorHideDelayMs = 2000;
         const int ToolbarTickMs = 100;
         const int StatusIntervalMs = 500;
@@ -44,6 +47,15 @@ namespace Framejet
         static extern bool ShowWindow(IntPtr hwnd, int command);
 
         readonly bool _selfTesting;
+        /// <summary>
+        /// An unstamped build (0.0.0-dev), not in the self-test: it also logs playback health every second, a fuller
+        /// minute line and what the player does, and keeps more and bigger logs. Published releases never do.
+        /// </summary>
+        readonly bool _devBuild;
+        readonly HealthMonitor _health = new HealthMonitor();
+        readonly Timer _healthTimer;
+        string _lastScreen;
+        bool _wasMinimised;
         readonly SettingsStore _store;
         readonly FileLog _fileLog;
         readonly VideoSurface _surface;
@@ -80,12 +92,15 @@ namespace Framejet
 
             var settingsPath = Path.GetFullPath(cmd.SettingsPath ?? SettingsStore.DefaultPath);
             _store = new SettingsStore(settingsPath);
-            _fileLog = new FileLog(Path.Combine(Path.GetDirectoryName(settingsPath), "Framejet.log"));
+            _devBuild = !_selfTesting && AppVersion.TryParse(Application.ProductVersion, out var version) && version.IsDev;
+            var logPath = Path.Combine(Path.GetDirectoryName(settingsPath), "Framejet.log");
+            _fileLog = _devBuild ? new FileLog(logPath, DevLogKeepOld, DevLogMaxBytes) : new FileLog(logPath);
             if (_selfTesting) _selfTest = new SelfTestRunner(this, cmd);
             Log = _selfTest != null ? _selfTest.RecordErrors(_fileLog) : _fileLog;
             UnhandledExceptions.Log = Log;
             Log.Info(UiText.NameAndVersion(Application.ProductVersion) + (_selfTesting ? " self-test started" : " started"));
             Log.Info("Settings " + settingsPath);
+            if (_devBuild) Log.Info("Dev build: logging playback health every second");
             Log.Info("Startup timing: the form's constructor began " + MsSinceProcessStart(constructorStart) + " ms after the process started");
             if (carryOver == CarryOverResult.Copied) Log.Info(@"Copied settings.ini from %AppData%\PlayThrough");
             else if (carryOver == CarryOverResult.Failed) Log.Info(@"Couldn't copy settings.ini from %AppData%\PlayThrough: " + carryOverError);
@@ -119,14 +134,16 @@ namespace Framejet
             _saveDebounce = new Debouncer(Clock, SaveDelay, WriteSettings);
             _statsTimer = new Timer { Interval = StatsIntervalMs };
             _statsTimer.Tick += (s, e) => LogStats();
+            _healthTimer = new Timer { Interval = HealthIntervalMs };
+            _healthTimer.Tick += (s, e) => SampleHealth();
             _cursorTimer = new Timer { Interval = CursorHideDelayMs };
             _cursorTimer.Tick += (s, e) => HideCursorNow();
             _toolbarTimer = new Timer { Interval = ToolbarTickMs };
             _toolbarTimer.Tick += (s, e) => UpdateToolbar();
             _statusTimer = new Timer { Interval = StatusIntervalMs };
             _statusTimer.Tick += (s, e) => UpdateStatus();
-            LocationChanged += (s, e) => FitToScreen();
-            SizeChanged += (s, e) => FitToScreen();
+            LocationChanged += (s, e) => { FitToScreen(); NoteScreen(); };
+            SizeChanged += (s, e) => { FitToScreen(); NoteScreen(); };
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
         }
 
@@ -197,6 +214,7 @@ namespace Framejet
         {
             if (_closed) return;
             Settings.VSync = !Settings.VSync;
+            Note("V-Sync " + (Settings.VSync ? "on" : "off"));
             if (VideoBackend != null) VideoBackend.VSync = Settings.VSync;
             SaveSettings();
             _toolbar?.RefreshToggles(); // from the menu as well as from the toolbar
@@ -207,6 +225,7 @@ namespace Framejet
         {
             if (_closed) return;
             Settings.NeverSkipFrames = !Settings.NeverSkipFrames;
+            Note("Never skip frames " + (Settings.NeverSkipFrames ? "on" : "off"));
             if (VideoBackend != null) VideoBackend.NeverSkipFrames = Settings.NeverSkipFrames;
             SaveSettings();
         }
@@ -216,6 +235,7 @@ namespace Framejet
         {
             if (_closed) return;
             Settings.Scaling = mode;
+            Note("Scaling " + mode);
             if (VideoBackend != null) VideoBackend.Scaling = mode;
             SaveSettings();
             _toolbar?.RefreshContent(false);
@@ -357,6 +377,11 @@ namespace Framejet
             _statusTimer.Start();
             VideoBackend.LumaSampled += OnLumaSampled;
             if (!_selfTesting) _statsTimer.Start(); // its audio stats reset would zero the self-test's figures
+            if (_devBuild)
+            {
+                NoteScreen();
+                _healthTimer.Start();
+            }
             Video.Refresh();
             if (UpdateCheck.ShouldCheck(Application.ProductVersion, Settings.CheckForUpdates, _selfTesting))
                 _updateTimer = Clock.After(UpdateCheck.Delay, StartUpdateCheck);
@@ -485,12 +510,19 @@ namespace Framejet
         {
             base.OnResize(e);
             if (VideoBackend != null) VideoBackend.Paused = WindowState == FormWindowState.Minimized;
+            bool minimised = WindowState == FormWindowState.Minimized;
+            if (minimised != _wasMinimised)
+            {
+                _wasMinimised = minimised;
+                Note(minimised ? "Window minimised: the picture is paused" : "Window restored");
+            }
             if (WindowState != FormWindowState.Minimized && !IsFullscreen)
                 _lastShownState = WindowState == FormWindowState.Maximized ? FormWindowState.Maximized : FormWindowState.Normal;
         }
 
         void OnFullscreenChanged()
         {
+            Note(IsFullscreen ? "Fullscreen" : "Windowed");
             _autoHide.SetFullscreen(IsFullscreen);
             _autoHide.Tick(Clock.Now); // SetFullscreen recomputes with the last time it saw
             if (IsFullscreen) _toolbar?.HideNow();
@@ -556,9 +588,55 @@ namespace Framejet
             if (_closed || VideoBackend == null || AudioBackend == null) return;
             var video = VideoBackend.GetStats();
             var audio = AudioBackend.GetStats(reset: true);
-            Log.Info(string.Format(CultureInfo.InvariantCulture,
-                "stats: video fps={0:0.0} drawn={1} dropped={2} mismatched={3}; audio buffer={4:0.0} ms max={5:0.0} ms trims={6}",
-                video.MeasuredFps, video.Drawn, video.Dropped, video.SizeMismatches, audio.BufferedMs, audio.MaxBufferedMs, audio.Trims));
+            if (!_devBuild)
+            {
+                Log.Info(string.Format(CultureInfo.InvariantCulture,
+                    "stats: video fps={0:0.0} drawn={1} dropped={2} mismatched={3}; audio buffer={4:0.0} ms max={5:0.0} ms trims={6}",
+                    video.MeasuredFps, video.Drawn, video.Dropped, video.SizeMismatches, audio.BufferedMs, audio.MaxBufferedMs, audio.Trims));
+                return;
+            }
+            var m = _health.TakeMinute();
+            long workingSet;
+            using (var process = Process.GetCurrentProcess()) workingSet = process.WorkingSet64;
+            double droppedPercent = m.Arrived > 0 ? 100.0 * m.Dropped / m.Arrived : 0;
+            Log.Info(Invariant($"stats (minute): video arrived={m.Arrived} drawn={m.Drawn} dropped={m.Dropped} ({droppedPercent:0.0}%) lowest fps={m.LowestFps:0.0} hiccups={m.Hiccups} resets={m.DeviceResets} slow ticks={m.SlowTicks} mismatched={video.SizeMismatches}; ")
+                + Invariant($"arrival→present p95={video.ArrivalToPresent.P95Ms:0.00} ms, queue wait p95={video.QueueWait.P95Ms:0.00} ms; ")
+                + Invariant($"audio buffer={audio.BufferedMs:0.0} ms max={audio.MaxBufferedMs:0.0} ms trims={audio.Trims} underruns={audio.Delay.Underruns}; ")
+                + Invariant($"memory={workingSet / 1048576.0:0} MB managed={GC.GetTotalMemory(false) / 1048576.0:0} MB gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}"));
+        }
+
+        /// <summary>Dev builds, every second: judges the playback counters and logs a hiccup line for a bad second.</summary>
+        void SampleHealth()
+        {
+            if (_closed || VideoBackend == null || AudioBackend == null || Video == null) return;
+            var video = VideoBackend.GetCounters();
+            var audio = AudioBackend.GetCounters();
+            var line = _health.Sample(new HealthSample
+            {
+                Seconds = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency,
+                VideoRunning = Video.State == VideoState.Running,
+                Paused = WindowState == FormWindowState.Minimized,
+                ModeFps = Video.Mode?.Fps ?? 0,
+                Arrived = video.Arrived, Drawn = video.Drawn, Dropped = video.Dropped, DeviceResets = video.DeviceResets, Fps = video.Fps,
+                AudioRunning = audio.Running, AudioTrims = audio.Trims, AudioUnderruns = audio.Underruns,
+            });
+            if (line != null) Log.Info(line);
+        }
+
+        /// <summary>Dev builds: a log line for what the player did, so the health lines can be read against it.</summary>
+        void Note(string text)
+        {
+            if (_devBuild && !_closed) Log.Info(text);
+        }
+
+        /// <summary>Dev builds: logs the screen the window is on when it changes, with its size and refresh rate.</summary>
+        void NoteScreen()
+        {
+            if (!_devBuild || _closed || !IsHandleCreated) return; // Screen.FromControl would create the handle early
+            var screen = Screen.FromControl(this);
+            if (screen.DeviceName == _lastScreen) return;
+            _lastScreen = screen.DeviceName;
+            Note(Invariant($"Window on {screen.DeviceName}{(screen.Primary ? " (primary)" : "")}: {screen.Bounds.Width}x{screen.Bounds.Height} at {DisplayMode.CurrentRefreshHz(screen.DeviceName)} Hz"));
         }
 
         void EnterFullscreen(ScreenInfo screen)
@@ -612,6 +690,8 @@ namespace Framejet
             ShowCursorNow();
             _statsTimer.Stop();
             _statsTimer.Dispose();
+            _healthTimer.Stop();
+            _healthTimer.Dispose();
             _toolbarTimer.Stop();
             _statusTimer.Stop();
             if (Audio != null) Audio.Changed -= OnAudioChanged;

@@ -258,6 +258,22 @@ namespace Framejet.Platform.Video
             return stats;
         }
 
+        /// <summary>The totals behind <see cref="GetStats"/>, without copying or sorting anything: for a once-a-second poll.</summary>
+        public PresenterCounters GetCounters()
+        {
+            var slot = _slot;
+            long published = slot?.Published ?? 0, replaced = slot?.Replaced ?? 0;
+            lock (_statsLock)
+                return new PresenterCounters
+                {
+                    Arrived = published - _publishedAtReset,
+                    Drawn = _drawn,
+                    Dropped = replaced - _replacedAtReset + _skipped,
+                    DeviceResets = _deviceResets,
+                    Fps = DrawRateLocked(),
+                };
+        }
+
         /// <summary>
         /// The draw rate over the last second, as in <see cref="GetStats"/>, without copying or sorting anything: for a
         /// frequent status poll. GetStats allocates, so it is for the occasional report.

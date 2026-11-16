@@ -44,6 +44,34 @@ namespace Framejet.Platform.Tests.Os
             Assert.DoesNotContain(Environment.UserName + @"\", text, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Fact] public void Keeping_four_old_logs_keeps_five_sessions()
+        {
+            foreach (var text in new[] { "first", "second", "third", "fourth", "fifth", "sixth" })
+                using (var log = new FileLog(LogPath, keepOld: 4)) log.Info(text);
+            Assert.Contains("sixth", File.ReadAllText(LogPath));
+            Assert.Contains("fifth", File.ReadAllText(OldPath));
+            Assert.Contains("fourth", File.ReadAllText(Path.Combine(dir, "Framejet.old2.log")));
+            Assert.Contains("third", File.ReadAllText(Path.Combine(dir, "Framejet.old3.log")));
+            Assert.Contains("second", File.ReadAllText(Path.Combine(dir, "Framejet.old4.log")));
+            Assert.False(File.Exists(Path.Combine(dir, "Framejet.old5.log")));
+            Assert.Equal(5, Directory.GetFiles(dir, "Framejet*.log").Length);
+        }
+
+        [Fact] public void By_default_only_one_old_log_is_kept()
+        {
+            Session(LogPath, "first"); Session(LogPath, "second"); Session(LogPath, "third");
+            Assert.False(File.Exists(Path.Combine(dir, "Framejet.old2.log")));
+        }
+
+        [Fact] public void The_size_limit_is_an_option()
+        {
+            using (var log = new FileLog(LogPath, maxBytes: 200))
+                for (int i = 0; i < 10; i++) log.Info(new string('x', 20));
+            var text = File.ReadAllText(LogPath);
+            Assert.True(new FileInfo(LogPath).Length < 260, "the log grew past its limit");
+            Assert.EndsWith("INFO log full" + Environment.NewLine, text);
+        }
+
         [Fact] public void A_locked_old_log_does_not_stop_logging()
         {
             Session(LogPath, "first"); Session(LogPath, "second");

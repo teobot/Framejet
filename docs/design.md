@@ -132,6 +132,7 @@ Non-goals
 - Remembers: video device (path and name), mode key, audio output, audio input override, volume, mute, V-Sync, never skip frames, window bounds and maximised state, and whether it was fullscreen and on which screen.
 - Restore the window position only if it lands on a connected screen; otherwise centre on the primary. Reopen fullscreen if it was closed fullscreen and that screen is still connected **(Claude's call)**.
 - Keep a small log of device events and errors at `%AppData%\Framejet\Framejet.log`, the last two sessions (`Framejet.log` and `Framejet.old.log`) **(Claude's call)**.
+  - Dev builds only (unstamped, `0.0.0-dev`; never a published release, the owner's call): every second a `hiccup` line for a second where the card sent under 90% of the mode's frames, over 10% of frames were dropped, the Direct3D device was reset, audio was trimmed or ran dry, or the UI tick came over 2 s late; a fuller per-minute `stats (minute)` line; lines for fullscreen, the window's screen, minimise and the V-Sync, Never skip frames and Scaling changes; and the last five sessions of up to 8 MB each (`Framejet.old2.log` to `Framejet.old4.log`) **(the thresholds are Claude's calls)**.
 
 ### 4.9 Self-test (owner, extended for Direct3D)
 `Framejet.exe --selftest out.txt` runs the real window for a few seconds (windowed, then fullscreen), writes a UTF-8 report and exits with code 0 for a pass. It exits with code 1 if must-pass 9's delay check fails **(Claude's call)**. The report covers:

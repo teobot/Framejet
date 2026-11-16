@@ -121,6 +121,14 @@ namespace Framejet.Platform.Audio
             }
         }
 
+        /// <summary>The running chain's totals; not running and zero when stopped. Cheap and allocation-free, for a once-a-second poll.</summary>
+        public AudioCounters GetCounters()
+        {
+            Session s;
+            lock (_sync) s = _session;
+            return s == null ? default : s.Counters();
+        }
+
         public AudioStats GetStats(bool reset)
         {
             Session s;
@@ -213,6 +221,8 @@ namespace Framejet.Platform.Audio
             }
 
             public void SetBlockPeakTap(Action<long, float> tap) => _ingest.BlockPeakTap = tap;
+
+            public AudioCounters Counters() => new AudioCounters { Running = true, Trims = _ingest.TrimsTotal, Underruns = _underruns.Underruns };
 
             public AudioStats Snapshot(bool reset)
             {
