@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using Framejet.Core;
 using Framejet.Core.Devices;
 using Framejet.Core.Video;
+using Framejet.Platform.Os;
 using Framejet.Platform.Tests.TestSupport;
 using Framejet.Platform.Video;
 using Xunit;
@@ -22,7 +23,10 @@ namespace Framejet.Platform.Tests.Video
                 b.MeasureLatency = true; b.Start(ripsaw, mode); Sta.Pump(TimeSpan.FromSeconds(1)); b.ResetStats(); Sta.Pump(TimeSpan.FromSeconds(4));
                 var fmt = b.Format; var s = b.GetStats(); b.Stop();
                 Assert.Equal(mode.Width, fmt.Width); Assert.Equal(mode.Height, fmt.Height); Assert.True(s.Drawn >= 200, $"drawn {s.Drawn}");
-                var v = DelayCheck.Evaluate(s.ArrivalToPresent, s.PresentToScreen, s.RefreshHz); Assert.True(v.Pass, v.Reason); });
+                // Judged by the display mode's refresh, as the self-test is: the DXGI-measured rate can read low in fullscreen,
+                // which would loosen the bars. A measured rate must still exist, or the frame statistics aren't working.
+                Assert.True(s.RefreshHz > 0, "no refresh measured"); int hz = DisplayMode.CurrentRefreshHz(Screen.PrimaryScreen.DeviceName);
+                var v = DelayCheck.Evaluate(s.ArrivalToPresent, s.PresentToScreen, hz > 0 ? hz : s.RefreshHz); Assert.True(v.Pass, v.Reason); });
         }
         [SkippableFact, Trait("Category", "Hardware")] public void Webcam_mjpg_arrives_as_bottom_up_rgb32()
         {
