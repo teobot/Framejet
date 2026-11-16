@@ -45,9 +45,9 @@ namespace Framejet.Core.Audio
         public void Start()
         {
             if (_running) return;
+            _taps.Begin(); // if it throws, the check stays idle
             _running = true;
             _left = (int)Duration.TotalSeconds;
-            _taps.Begin();
             SecondsLeft?.Invoke(_left);
             Schedule();
         }

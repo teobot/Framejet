@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using NAudio.Wave;
 using Framejet.Core.Audio;
 using Framejet.Core.Video;
@@ -20,14 +21,23 @@ namespace Framejet.Platform.Audio
         int _levelCount, _levelNext;
 
         long _bytes; float _peak; double _buffered, _maxBuffered; int _trimsBase;
+        volatile Action<long, float> _blockPeakTap;
+        long _lastBlockStamp = long.MinValue; // touched only on the capture thread
 
         public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, LatencyTrimmer trimmer)
         {
             _buffer = buffer; _captureFormat = captureFormat; _trimmer = trimmer;
         }
 
+        /// <summary>
+        /// While set, called on the capture thread for each 1 ms block of every packet, with the block's peak and the
+        /// Stopwatch time its first sample was captured, counted back from the packet's arrival. It must return at once.
+        /// </summary>
+        public Action<long, float> BlockPeakTap { set => _blockPeakTap = value; }
+
         public void Process(byte[] data, int count)
         {
+            long arrived = Stopwatch.GetTimestamp();
             if (count == 0) return;
             int needed = _captureFormat.Encoding == WaveFormatEncoding.IeeeFloat || _captureFormat.BitsPerSample >= 32
                 ? count : count * 4 / (_captureFormat.BitsPerSample / 8);
@@ -41,8 +51,11 @@ namespace Framejet.Platform.Audio
                 if (a > peak) peak = a;
             }
 
-            _buffer.AddSamples(_floatScratch, 0, n);
             var bf = _buffer.WaveFormat;
+            var tap = _blockPeakTap;
+            if (tap != null) TapBlocks(tap, n, bf, arrived);
+
+            _buffer.AddSamples(_floatScratch, 0, n);
             double preTrimMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
 
             int drop = _trimmer.BytesToDrop(_buffer.BufferedBytes, bf.AverageBytesPerSecond, bf.BlockAlign);
@@ -63,6 +76,35 @@ namespace Framejet.Platform.Audio
                 _levelNext = (_levelNext + 1) % _levels.Length;
                 if (_levelCount < _levels.Length) _levelCount++;
                 if (preTrimMs > _maxBuffered) _maxBuffered = preTrimMs;
+            }
+        }
+
+        /// <summary>
+        /// Splits the packet's <paramref name="bytes"/> of float samples into blocks of about 1 ms (the remainder spread
+        /// over them) and reports each block's peak, stamped arrival − (samples from the block's start to the packet's
+        /// end) / rate. Callback jitter can put a packet's first block up to a millisecond or so before the previous
+        /// packet's last one; such a stamp is held at the previous one, so stamps never go backwards.
+        /// </summary>
+        void TapBlocks(Action<long, float> tap, int bytes, WaveFormat format, long arrived)
+        {
+            int frameBytes = 4 * format.Channels;
+            int frames = bytes / frameBytes;
+            if (frames == 0) return;
+            int perMs = Math.Max(1, format.SampleRate / 1000);
+            int blocks = Math.Max(1, (frames + perMs / 2) / perMs);
+            for (int b = 0; b < blocks; b++)
+            {
+                int start = (int)((long)b * frames / blocks), end = (int)((long)(b + 1) * frames / blocks);
+                float peak = 0;
+                for (int i = start * frameBytes; i < end * frameBytes; i += 4)
+                {
+                    float a = Math.Abs(BitConverter.ToSingle(_floatScratch, i));
+                    if (a > peak) peak = a;
+                }
+                long after = frames - start;
+                long stamp = Math.Max(arrived - after * Stopwatch.Frequency / format.SampleRate, _lastBlockStamp);
+                _lastBlockStamp = stamp;
+                tap(stamp, peak);
             }
         }
 

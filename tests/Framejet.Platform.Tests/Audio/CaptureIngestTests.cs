@@ -19,6 +19,29 @@ namespace Framejet.Platform.Tests.Audio
         static byte[] Chunk(int ms) => new byte[48 * ms * 8];
 
         [Fact]
+        public void Block_tap_reports_each_ms_of_a_packet_with_its_peak_and_a_stamp_counted_back_from_arrival()
+        {
+            var ingest = Make(out _, out _);
+            var chunk = Chunk(10);
+            BitConverter.GetBytes(-0.5f).CopyTo(chunk, (3 * 48 + 5) * 8 + 4); // right channel, block 3
+            var calls = new System.Collections.Generic.List<(long Ticks, float Peak)>();
+            ingest.BlockPeakTap = (t, p) => calls.Add((t, p));
+            long before = System.Diagnostics.Stopwatch.GetTimestamp();
+            ingest.Process(chunk, chunk.Length);
+            long after = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            Assert.Equal(10, calls.Count);
+            for (int b = 0; b < 10; b++) Assert.Equal(b == 3 ? 0.5 : 0.0, (double)calls[b].Peak, 6);
+            long ms = System.Diagnostics.Stopwatch.Frequency / 1000;
+            Assert.InRange(calls[0].Ticks, before - 10 * ms, after - 10 * ms);
+            for (int b = 1; b < 10; b++) Assert.Equal(ms, calls[b].Ticks - calls[b - 1].Ticks);
+
+            ingest.BlockPeakTap = null;
+            ingest.Process(chunk, chunk.Length);
+            Assert.Equal(10, calls.Count);
+        }
+
+        [Fact]
         public void Max_buffered_is_recorded_before_trimming()
         {
             var ingest = Make(out var buf, out var trimmer);

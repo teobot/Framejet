@@ -16,6 +16,7 @@ namespace Framejet.Platform.Audio
         readonly ILog _log;
         readonly object _sync = new object();
         Session _session;
+        volatile Action<long, float> _blockPeakTap;
 
         public WasapiAudioBackend(ILog log) { _log = log ?? NullLog.Instance; }
 
@@ -105,6 +106,21 @@ namespace Framejet.Platform.Audio
             catch (Exception ex) { _log.Error("Audio stop failed", ex); }
         }
 
+        /// <summary>
+        /// While set, called on the capture thread for each 1 ms block of captured sound with its capture stamp and peak.
+        /// It must return at once and never touch the UI. It carries over to later starts until it is set back to null.
+        /// </summary>
+        public Action<long, float> BlockPeakTap
+        {
+            set
+            {
+                _blockPeakTap = value;
+                Session s;
+                lock (_sync) s = _session;
+                s?.SetBlockPeakTap(value);
+            }
+        }
+
         public AudioStats GetStats(bool reset)
         {
             Session s;
@@ -168,7 +184,8 @@ namespace Framejet.Platform.Audio
                     DiscardOnBufferOverflow = true,
                     ReadFully = true
                 };
-                _ingest = new CaptureIngest(_buffer, _captureFormat, new LatencyTrimmer(LatencyTrimmer.DefaultTarget, LatencyTrimmer.DefaultTrimAbove));
+                _ingest = new CaptureIngest(_buffer, _captureFormat, new LatencyTrimmer(LatencyTrimmer.DefaultTarget, LatencyTrimmer.DefaultTrimAbove))
+                    { BlockPeakTap = _owner._blockPeakTap };
                 _capture.DataAvailable += (s, e) => { if (ReferenceEquals(s, _capture)) { if (!_disposed) _ingest.Process(e.Buffer, e.BytesRecorded); } };
                 _capture.RecordingStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _capture)) _owner.RaiseFailed(this, e.Exception.Message); };
 
@@ -194,6 +211,8 @@ namespace Framejet.Platform.Audio
                 ReadCaptureClient();
                 _owner._log.Info("Audio delay figures: capture=" + _captureSource + ", output=" + _outputSource);
             }
+
+            public void SetBlockPeakTap(Action<long, float> tap) => _ingest.BlockPeakTap = tap;
 
             public AudioStats Snapshot(bool reset)
             {

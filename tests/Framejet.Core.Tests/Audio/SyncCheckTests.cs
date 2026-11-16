@@ -19,8 +19,13 @@ namespace Framejet.Core.Tests.Audio
             public IReadOnlyList<(long Ticks, double Luma)> Frames = new List<(long, double)>();
             public IReadOnlyList<(long Ticks, float Peak)> Audio = new List<(long, float)>();
             public double AudioDelayMs = 20, PictureDelayMs = 6;
+            public bool ThrowOnBegin;
 
-            public void Begin() => Begins++;
+            public void Begin()
+            {
+                Begins++;
+                if (ThrowOnBegin) throw new InvalidOperationException("taps unavailable");
+            }
 
             public (IReadOnlyList<(long Ticks, double Luma)> Frames, IReadOnlyList<(long Ticks, float Peak)> Audio, double AudioDelayMs, double PictureDelayMs) End()
             {
@@ -61,6 +66,26 @@ namespace Framejet.Core.Tests.Audio
             check.Finished += (h, s) => done.Add((h, s));
             check.SecondsLeft += seconds.Add;
             return (check, sched, done, seconds);
+        }
+
+        [Fact]
+        public void Begin_throwing_leaves_check_idle()
+        {
+            var taps = new FakeTaps { ThrowOnBegin = true };
+            var (check, sched, done, seconds) = Make(taps);
+
+            Assert.Throws<InvalidOperationException>(() => check.Start());
+            check.Cancel();
+            check.SourceStopped();
+            sched.Advance(SyncCheck.Duration);
+            Assert.Equal(0, taps.Ends);
+            Assert.Empty(done);
+            Assert.Empty(seconds);
+
+            taps.ThrowOnBegin = false;
+            check.Start();
+            Assert.Equal(2, taps.Begins);
+            Assert.Equal(new[] { 20 }, seconds);
         }
 
         [Fact]
