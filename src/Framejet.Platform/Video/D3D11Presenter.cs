@@ -27,6 +27,7 @@ namespace Framejet.Platform.Video
         const PresentFlags AllowTearingPresent = (PresentFlags)0x200; // DXGI_PRESENT_ALLOW_TEARING
         const uint SkipAfterWaitMs = 4;   // V-Sync On, default: skip the frame when the display queue is still busy after this
         const uint LongWaitMs = 1000;     // every other mode: wait this long at most, then skip the frame
+        const uint StuckQueueMs = 1000;   // no slot for this long while frames keep arriving: the queue is stuck
         const int InvalidCall = unchecked((int)0x887A0001);           // DXGI_ERROR_INVALID_CALL
         const int DeviceRemoved = unchecked((int)0x887A0005);         // DXGI_ERROR_DEVICE_REMOVED
         const int DeviceHung = unchecked((int)0x887A0006);            // DXGI_ERROR_DEVICE_HUNG
@@ -126,7 +127,7 @@ namespace Framejet.Platform.Video
             if (hwnd == IntPtr.Zero) throw new ArgumentException("A window handle is needed", nameof(hwnd));
             _hwnd = hwnd;
             _log = log ?? throw new ArgumentNullException(nameof(log));
-            _latency = new LatencyWaiter(WaitForQueue, Stopwatch.GetTimestamp, Stopwatch.Frequency);
+            _latency = new LatencyWaiter(WaitForQueue, Stopwatch.GetTimestamp, Stopwatch.Frequency, StuckQueueMs);
             CreateDevice();
         }
 

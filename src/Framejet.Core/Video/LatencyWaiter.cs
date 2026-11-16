@@ -25,18 +25,21 @@ namespace Framejet.Core.Video
 
         readonly Func<uint, uint> _wait;
         readonly Func<long> _clock;
+        readonly uint _stuckMs;
         readonly long _stuckTicks;
         bool _held;                    // a slot taken by a frame whose Present failed
         long _busySince, _lastBusyEnd; // the current run of timed-out waits: when it began and when its last wait ended; 0 when none
 
         /// <param name="wait">Waits on the object for up to the given ms and returns the WaitForSingleObject result.</param>
-        /// <param name="clock">The time, in the ticks <paramref name="stuckTicks"/> is in.</param>
-        /// <param name="stuckTicks">How long no slot may come while frames keep arriving before the queue counts as stuck.</param>
-        public LatencyWaiter(Func<uint, uint> wait, Func<long> clock, long stuckTicks)
+        /// <param name="clock">The time, in ticks of <paramref name="ticksPerSecond"/>.</param>
+        /// <param name="ticksPerSecond">How many <paramref name="clock"/> ticks make a second.</param>
+        /// <param name="stuckMs">How long no slot may come while frames keep arriving before the queue counts as stuck.</param>
+        public LatencyWaiter(Func<uint, uint> wait, Func<long> clock, long ticksPerSecond, uint stuckMs)
         {
             _wait = wait;
             _clock = clock;
-            _stuckTicks = stuckTicks;
+            _stuckMs = stuckMs;
+            _stuckTicks = stuckMs * ticksPerSecond / 1000;
         }
 
         /// <summary>Waits up to <paramref name="waitMs"/> for a slot. After a failed Present, the frame takes its slot without waiting.</summary>
@@ -58,7 +61,9 @@ namespace Framejet.Core.Video
             // starts a new run.
             if (_busySince == 0 || start - _lastBusyEnd > _stuckTicks / 4) _busySince = start;
             _lastBusyEnd = end;
-            if (end - _busySince < _stuckTicks) return QueueSlot.Busy;
+            // A wait as long as the stuck time is stuck on its own. WaitForSingleObject can time out a fraction under its
+            // length by the clock, so the measured run alone would only call it stuck after a second timeout.
+            if (waitMs < _stuckMs && end - _busySince < _stuckTicks) return QueueSlot.Busy;
             _busySince = 0;
             return QueueSlot.Stuck;
         }

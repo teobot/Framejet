@@ -18,6 +18,7 @@ namespace Framejet.Core.Tests.Video
             public long Now;
             public int Count = 1, MaxCount = 1, Waits;
             public uint Result = 0; // what a wait that gets nothing returns, when not WaitTimeout
+            public long TimeoutEarlyBy; // a timed-out wait returns this long before its end
             readonly List<long> _releases = new List<long>();
 
             public void ReleaseAt(long time) { _releases.Add(time); _releases.Sort(); }
@@ -33,7 +34,7 @@ namespace Framejet.Core.Tests.Video
                     Release();
                 }
                 if (Count > 0) { Count--; return 0; }
-                Now = deadline;
+                Now = deadline - TimeoutEarlyBy;
                 return Result != 0 ? Result : WaitTimeout;
             }
 
@@ -55,7 +56,7 @@ namespace Framejet.Core.Tests.Video
         FakeQueue _q = new FakeQueue();
         readonly LatencyWaiter _w;
 
-        public LatencyWaiterTests() { _w = new LatencyWaiter(ms => _q.Wait(ms), () => _q.Now, stuckTicks: 1000); }
+        public LatencyWaiterTests() { _w = new LatencyWaiter(ms => _q.Wait(ms), () => _q.Now, ticksPerSecond: 1000, stuckMs: 1000); }
 
         QueueSlot At(long now, uint waitMs = 4) { _q.Advance(now); return _w.BeforePresent(waitMs); }
 
@@ -113,6 +114,16 @@ namespace Framejet.Core.Tests.Video
             Assert.Equal(QueueSlot.Stuck, At(16, waitMs: 1000));
         }
 
+        // WaitForSingleObject can time out a fraction under its length by the Stopwatch clock. The wait was still as long as
+        // the stuck time, so it must not take a second 1 s timeout to recreate.
+        [Fact]
+        public void A_one_second_wait_that_times_out_a_little_early_is_still_stuck()
+        {
+            _q.Count = 0; _q.TimeoutEarlyBy = 1;
+            Assert.Equal(QueueSlot.Stuck, At(16, waitMs: 1000));
+            Assert.Equal(1015, _q.Now); // the wait returned at 999 ms
+        }
+
         [Fact]
         public void A_gap_with_no_frames_starts_a_new_run()
         {
@@ -142,15 +153,15 @@ namespace Framejet.Core.Tests.Video
         public void Stays_one_deep_with_a_60_fps_source_on_a_59_94_Hz_display(uint waitMs)
         {
             const double frame = 1000 / 60.0, refresh = 1000 / 59.94, latch = 3.5;
+            // The fake runs in µs here, for the 0.06 ms beat between the two rates; the wait turns the waiter's ms into µs.
             var q = new FakeQueue();
-            var w = new LatencyWaiter(ms => q.Wait(ms), () => q.Now, stuckTicks: 1000 * 1000);
+            var w = new LatencyWaiter(ms => q.Wait(ms * 1000), () => q.Now, ticksPerSecond: 1000 * 1000, stuckMs: 1000);
             int presented = 0, frames = 0;
             for (double arrival = 0; arrival < 60000; arrival += frame)
             {
-                // Time is in µs here, for the 0.06 ms beat between the two rates.
                 q.Advance(System.Math.Max(q.Now, (long)(arrival * 1000)));
                 frames++;
-                if (w.BeforePresent(waitMs * 1000) != QueueSlot.Taken) continue;
+                if (w.BeforePresent(waitMs) != QueueSlot.Taken) continue;
                 presented++;
                 double shown = System.Math.Ceiling((q.Now / 1000.0 + latch) / refresh) * refresh;
                 q.ReleaseAt((long)(shown * 1000));
