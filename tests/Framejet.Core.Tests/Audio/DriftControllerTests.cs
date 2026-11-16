@@ -12,8 +12,7 @@ namespace Framejet.Core.Tests.Audio
         const int Block = 8;
         static int Bytes(double ms) => (int)(Bps * ms / 1000) / Block * Block;
 
-        // The level after a packet can't fall below one packet, so at a 10 ms target the ring is at its floor: any
-        // speed-up there, however small, starves the next read. Small excursions must leave the ratio at exactly 1.
+        // Measurement noise within the band must not move the rate.
         [Fact] public void Holds_ratio_at_exactly_one_within_the_band()
         {
             var c = new DriftController();
@@ -53,17 +52,22 @@ namespace Framejet.Core.Tests.Audio
             Assert.Equal(0.995, low.Ratio, 6);
         }
 
-        static void Simulate(double cardRate, out double finalLevel, out double meanLate, out double p95Late, out int trims, out double target)
+        static void Simulate(double cardRate, out double finalLevel, out double meanLate, out double p95Late, out int trims, out double target, double startAbove = 0)
+            => Simulate(cardRate, out finalLevel, out meanLate, out p95Late, out trims, out target, out _, startAbove);
+
+        static void Simulate(double cardRate, out double finalLevel, out double meanLate, out double p95Late, out int trims, out double target, out double minLevel, double startAbove)
         {
             var c = new DriftController();
             target = c.Target.TotalMilliseconds;
-            double level = target;
+            double level = target + startAbove;
+            minLevel = level;
             var late = new List<double>();
             const int steps = 60000;   // 10 min of 10 ms steps
             for (int i = 0; i < steps; i++)
             {
                 c.Update(level, 10);
                 level += 10 * cardRate - 10 * c.Ratio;
+                minLevel = Math.Min(minLevel, level);
                 if (i >= 1000) late.Add(level);
             }
             finalLevel = level;
@@ -89,6 +93,42 @@ namespace Framejet.Core.Tests.Audio
             Assert.Equal(0, trims);
         }
 
+        // P alone would hold a 0.43% offset only 4.3 ms below the target; the integral term takes that error away.
+        [Theory, InlineData(0.9957), InlineData(1.0043)]
+        public void Integral_learns_a_steady_clock_offset(double cardRate)
+        {
+            Simulate(cardRate, out double final, out double mean, out _, out int trims, out double target);
+            Assert.InRange(final, target - 0.75, target + 0.75);
+            Assert.InRange(mean, target - 0.75, target + 0.75);
+            Assert.Equal(0, trims);
+        }
+
+        // Prefill can open with a packet's worth above the target. Draining it must not wind the integral up into an
+        // overshoot below the target, where the ring runs dry.
+        [Fact] public void A_start_up_excess_drains_without_overshoot()
+        {
+            Simulate(1.0, out double final, out _, out _, out _, out double target, out double min, startAbove: 10);
+            Assert.True(min >= target - 1.5, $"fell to {min:0.00} ms against a {target} ms target"); // well within the 3 ms margin
+            Assert.InRange(final, target - 0.75, target + 0.75);
+        }
+
+        // The output's clock 0.43% fast from the start: the level must not fall more than the start target's worth.
+        [Fact] public void A_large_offset_from_the_start_stays_within_the_headroom()
+        {
+            Simulate(0.9957, out _, out _, out _, out _, out double target, out double min, startAbove: 0);
+            Assert.True(min > 0, $"fell to {min:0.00} ms");
+        }
+
+        [Fact] public void For_streams_starts_at_one_output_period_plus_the_margin()
+        {
+            var c = DriftController.ForStreams(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(2));
+            Assert.Equal(2 + DriftController.HeadroomMargin.TotalMilliseconds, c.Target.TotalMilliseconds, 6);
+            Assert.Equal(10, c.CapturePeriod.TotalMilliseconds, 6);
+            Assert.Equal(c.Target + c.CapturePeriod, c.FullLevel);
+            for (int i = 0; i < 10; i++) c.Underrun();
+            Assert.Equal(20, c.Target.TotalMilliseconds, 6); // headroom plus one 10 ms packet stays within 30 ms
+        }
+
         [Fact] public void Underruns_raise_target_in_steps_up_to_30ms()
         {
             var c = new DriftController();
@@ -110,6 +150,14 @@ namespace Framejet.Core.Tests.Audio
             Assert.Equal(0, trim % Block);
             Assert.InRange(buffered - trim, Bytes(10) - Block, Bytes(10) + Block);
             Assert.Equal(1, c.Trims);
+        }
+
+        [Fact] public void Hard_trim_keeps_the_target_plus_one_capture_period()
+        {
+            var c = DriftController.ForStreams(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10));
+            int buffered = Bytes(100);
+            int trim = c.BytesToTrim(buffered, Bps, Block);
+            Assert.InRange(buffered - trim, Bytes(c.FullLevel.TotalMilliseconds) - Block, Bytes(c.FullLevel.TotalMilliseconds) + Block);
         }
     }
 }

@@ -52,6 +52,9 @@ namespace Framejet.Platform.Audio
         /// <summary>Raised on the capture thread for each packet; the buffer is reused, so copy what you need before returning.</summary>
         public event Action<byte[], int> DataAvailable;
 
+        /// <summary>Raised on the capture thread for a packet flagged as a discontinuity: the device dropped audio.</summary>
+        public event Action Glitch;
+
         /// <summary>Raised on the capture thread when the stream breaks (not on Dispose).</summary>
         public event Action<Exception> Stopped;
 
@@ -80,6 +83,7 @@ namespace Framejet.Platform.Audio
                         if ((flags & CoreAudio.BufferFlagsSilent) != 0) Array.Clear(buffer, 0, bytes);
                         else Marshal.Copy(data, buffer, 0, bytes);
                         _capture.ReleaseBuffer(frames);
+                        if ((flags & CoreAudio.BufferFlagsDataDiscontinuity) != 0) Glitch?.Invoke();
                         DataAvailable?.Invoke(buffer, bytes);
                     }
                 }
@@ -96,10 +100,11 @@ namespace Framejet.Platform.Audio
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             _stopping = true;
             _stop.Set();
-            bool exited = LowLatencyClient.Join(_thread, ThreadName, _log);
+            // A thread that won't stop may still be using the COM objects and handles: leave them all to it.
+            if (!LowLatencyClient.Join(_thread, ThreadName, _log)) return;
             CoreAudio.Release(_capture);
-            _client.Dispose(releaseEvent: exited);
-            if (exited) _stop.Dispose();
+            _client.Dispose();
+            _stop.Dispose();
         }
     }
 }

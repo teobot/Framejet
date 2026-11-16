@@ -59,8 +59,11 @@ namespace Framejet.Platform.Tests.Audio
             var input = Input(b); string failed = null; b.Failed += m => failed = m;
             b.Start(input, output, 0f); Thread.Sleep(1000); var s = b.GetStats(reset: false); b.Stop();
             Assert.Null(failed);
-            Assert.Equal("normal", s.Delay.Mode);
+            Assert.Contains(s.Delay.Mode, new[] { "normal", "low-latency capture" }); // the output runs normal mode
         }
+
+        static string ExpectedMode(bool capture, bool render)
+            => capture && render ? "low-latency" : capture ? "low-latency capture" : render ? "low-latency output" : "normal";
 
         [SkippableFact, Trait("Category", "Hardware")] public void Render_stream_pulls_at_the_device_rate()
         {
@@ -91,39 +94,26 @@ namespace Framejet.Platform.Tests.Audio
             public int Read(byte[] buffer, int offset, int count) { Array.Clear(buffer, offset, count); Interlocked.Add(ref _bytes, count); return count; }
         }
 
+        // Each end runs low-latency when its own endpoint can: both, or one beside a normal one (mixed mode).
         [SkippableFact, Trait("Category", "Hardware")] public void Plays_through_low_latency_at_gain_zero()
-        {
-            using var b = new WasapiAudioBackend(new OutputLog(_out)); string failed = null; b.Failed += m => failed = m;
-            var input = Input(b); var output = b.DefaultOutput(); Assert.NotNull(output);
-            var support = Support(input, output);
-            Skip.If(!support.Capture || !support.Render, "low-latency mode needs both ends; input: " + (support.WhyIn ?? "yes") + ", default output: " + (support.WhyOut ?? "yes"));
-
-            b.Start(input, output, 0f); Thread.Sleep(5000); var s = b.GetStats(reset: false); b.Stop(); b.Stop();
-            _out.WriteLine(s.Delay.ReportLine());
-            Assert.Null(failed);
-            Assert.Equal("low-latency", s.Delay.Mode);
-            Assert.True(s.Delay.PeriodMs < 10, $"period {s.Delay.PeriodMs} ms");
-            Assert.True(s.BytesCaptured > 0);
-            Assert.True(s.Delay.CaptureMs > 0); Assert.True(s.Delay.OutputMs > 0);
-            Assert.Equal(0, s.Trims);
-            Assert.True(s.Delay.TotalMeanMs < 100, $"total {s.Delay.TotalMeanMs} ms");
-        }
-
-        // A 10 ms end can't share the 10 ms buffer target with a low-latency one, so it's both ends or neither.
-        [SkippableFact, Trait("Category", "Hardware")] public void Runs_normal_mode_unless_both_ends_have_low_latency()
         {
             var registry = new LowLatencyRegistry();
             using var b = new WasapiAudioBackend(new OutputLog(_out), registry); string failed = null; b.Failed += m => failed = m;
             var input = Input(b); var output = b.DefaultOutput(); Assert.NotNull(output);
             var support = Support(input, output);
-            Skip.If(support.Capture == support.Render, "needs exactly one end with a low-latency mode");
+            Skip.If(!support.Capture && !support.Render, "neither the input (" + support.WhyIn + ") nor the default output (" + support.WhyOut + ") has a low-latency mode");
 
-            b.Start(input, output, 0f); Thread.Sleep(1500); var s = b.GetStats(reset: false); b.Stop();
+            b.Start(input, output, 0f); Thread.Sleep(8000); var s = b.GetStats(reset: false); b.Stop(); b.Stop();
+            _out.WriteLine(s.Delay.ReportLine());
             Assert.Null(failed);
-            Assert.Equal("normal", s.Delay.Mode);
+            Assert.Equal(ExpectedMode(support.Capture, support.Render), s.Delay.Mode);
+            if (support.Capture && support.Render) Assert.True(s.Delay.PeriodMs < 10, $"period {s.Delay.PeriodMs} ms");
             Assert.True(s.BytesCaptured > 0);
-            Assert.Equal(support.Capture, registry.ShouldTry(input.Id)); // only the end that can't is remembered
-            Assert.Equal(support.Render, registry.ShouldTry(output.Id));
+            Assert.True(s.Delay.CaptureMs > 0); Assert.True(s.Delay.OutputMs > 0);
+            Assert.Equal(0, s.Trims);
+            Assert.Equal(0, s.Delay.Underruns + s.Delay.StartupUnderruns);
+            Assert.True(registry.ShouldTry(input.Id) == support.Capture && registry.ShouldTry(output.Id) == support.Render, "an endpoint fell back");
+            Assert.True(s.Delay.TotalMeanMs < 100, $"total {s.Delay.TotalMeanMs} ms");
         }
 
         [SkippableFact, Trait("Category", "Hardware")] public void Unsupported_endpoint_runs_normal_mode()
@@ -135,9 +125,14 @@ namespace Framejet.Platform.Tests.Audio
 
             b.Start(input, output, 0f); Thread.Sleep(1500); var s = b.GetStats(reset: false); b.Stop();
             Assert.Null(failed);
+            Assert.Contains(s.Delay.Mode, new[] { "normal", "low-latency capture" }); // the output runs normal mode
+            Assert.True(s.BytesCaptured > 0);
+
+            registry.Unsupported(input.Id);
+            b.Start(input, output, 0f); Thread.Sleep(1500); s = b.GetStats(reset: false); b.Stop();
+            Assert.Null(failed);
             Assert.Equal("normal", s.Delay.Mode);
             Assert.True(s.BytesCaptured > 0);
-            Assert.True(registry.ShouldTry(input.Id) || !Support(input, output).Capture); // the input wasn't blamed for the output
         }
 
         [SkippableFact, Trait("Category", "Hardware")] public void Capture_stream_delivers_short_packets()

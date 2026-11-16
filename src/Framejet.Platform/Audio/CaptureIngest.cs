@@ -13,10 +13,11 @@ namespace Framejet.Platform.Audio
     /// steers the playback rate to hold the buffer at its target; samples are dropped only after a stall.
     /// Playback reads silence until the buffer reaches the target (prefill), at start and again after a stall.
     /// <para>
-    /// The level the controller holds at its target is the <b>lowest buffer level right after a packet landed, over
-    /// the last second</b>. With 10 ms packets a 10 ms target therefore means the ring is about empty just before each
-    /// packet, as it was before rate control. A packet that lands early, before playback's read, lifts one sample but
-    /// not the minimum, so it can't speed playback up at that floor and starve the next read.
+    /// The level the controller holds at its target is the <b>pre-packet headroom</b>: the lowest buffer level just
+    /// before a packet landed, over the last second (the lowest post-packet level less that packet). Holding it at one
+    /// output period plus a margin lets one output read come before a packet instead of after it without running
+    /// dry. A packet that lands early lifts one sample but not the minimum. Prefill waits for the target plus one capture
+    /// period, and a trim cuts back to that.
     /// </para>
     /// </summary>
     internal sealed class CaptureIngest
@@ -108,6 +109,7 @@ namespace Framejet.Platform.Audio
             }
 
             var bf = _buffer.WaveFormat;
+            double headroomMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
             _buffer.AddSamples(_floatScratch, 0, n);
             double preTrimMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
 
@@ -122,7 +124,7 @@ namespace Framejet.Platform.Audio
             {
                 // Recompute from the live level on each pass: playback reads concurrently, and a fixed drop
                 // worked out up front could take the level below the target.
-                int keep = (int)(bf.AverageBytesPerSecond * _drift.Target.TotalSeconds) / bf.BlockAlign * bf.BlockAlign;
+                int keep = (int)(bf.AverageBytesPerSecond * _drift.FullLevel.TotalSeconds) / bf.BlockAlign * bf.BlockAlign;
                 while (true)
                 {
                     int excess = (_buffer.BufferedBytes - keep) / bf.BlockAlign * bf.BlockAlign;
@@ -134,10 +136,10 @@ namespace Framejet.Platform.Audio
             double ms = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
             if (trimmed) _log.Info(FormattableString.Invariant($"Audio buffer trimmed from {preTrimMs:0.0} ms to {ms:0.0} ms after a stall"));
 
-            if (!_primed && ms >= _drift.Target.TotalMilliseconds) { _primed = true; Interlocked.Exchange(ref _primedAt, arrived); }
+            if (!_primed && ms >= _drift.FullLevel.TotalMilliseconds) { _primed = true; Interlocked.Exchange(ref _primedAt, arrived); }
             if (_primed)
             {
-                double ratio = _drift.Update(WindowMin(arrived, ms), elapsedMs);
+                double ratio = _drift.Update(WindowMin(arrived, trimmed ? ms - _drift.CapturePeriod.TotalMilliseconds : headroomMs), elapsedMs);
                 var resampler = _resampler;
                 if (resampler != null) resampler.Ratio = ratio;
             }
@@ -156,7 +158,7 @@ namespace Framejet.Platform.Audio
             }
         }
 
-        /// <summary>Adds this packet's level and returns the lowest of the last second.</summary>
+        /// <summary>Adds this packet's headroom and returns the lowest of the last second.</summary>
         double WindowMin(long now, double levelMs)
         {
             while (_winCount > 0 && (now - _winTicks[_winStart] > MinWindowTicks || _winCount == _winTicks.Length))
@@ -182,12 +184,20 @@ namespace Framejet.Platform.Audio
             return true;
         }
 
+        /// <summary>
+        /// Whether a glitch now counts: past the settle time since the prefill gate last opened, and while capture is
+        /// delivering. <paramref name="now"/> is the Stopwatch time. Any thread.
+        /// </summary>
+        public bool CountsNow(out long now)
+        {
+            now = _clock();
+            return _primed && now - Interlocked.Read(ref _primedAt) > SettleTicks && Delivering;
+        }
+
         // On the output thread.
         void OnUnderrun()
         {
-            long now = _clock();
-            bool settled = now - Interlocked.Read(ref _primedAt) > SettleTicks;
-            if (!settled || !Delivering) return;
+            if (!CountsNow(out long now)) return;
             Interlocked.Increment(ref _pendingUnderruns);
             _countedUnderrun?.Invoke(now);
         }

@@ -81,6 +81,7 @@ namespace Framejet.Platform.Audio.Interop
         public static readonly Guid ClsidMMDeviceEnumerator = new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E");
         public static readonly Guid IidMMDeviceEnumerator = typeof(IMMDeviceEnumerator).GUID;
         public const int StreamFlagsEventCallback = 0x00040000;
+        public const int BufferFlagsDataDiscontinuity = 0x1;
         public const int BufferFlagsSilent = 0x2;
         public static readonly Guid IidAudioClient3 = typeof(IAudioClient3).GUID;
         public static readonly Guid IidAudioCaptureClient = typeof(IAudioCaptureClient).GUID;
@@ -234,21 +235,19 @@ namespace Framejet.Platform.Audio.Interop
         {
             if (t == null || t == Thread.CurrentThread) return true;
             if (t.Join(JoinTimeoutMs)) return true;
-            log.Error(name + " thread did not stop within " + JoinTimeoutMs + " ms", null);
+            log.Error(name + " thread did not stop within " + JoinTimeoutMs + " ms; leaving its COM objects to it", null);
             return false;
         }
 
-        /// <summary>Releases the COM objects; the event too unless a stream thread may still be waiting on it.</summary>
-        public void Dispose(bool releaseEvent = true)
+        /// <summary>Releases the COM objects and the event. Only once no stream thread is using them.</summary>
+        public void Dispose()
         {
             try { Client?.Stop(); } catch (Exception) { }
             CoreAudio.Release(Client); Client = null;
             CoreAudio.Release(_device); _device = null;
             CoreAudio.Release(_enumerator); _enumerator = null;
             if (_format != IntPtr.Zero) { Marshal.FreeCoTaskMem(_format); _format = IntPtr.Zero; }
-            if (releaseEvent) Event?.Dispose();
+            Event?.Dispose();
         }
-
-        void IDisposable.Dispose() => Dispose();
     }
 }

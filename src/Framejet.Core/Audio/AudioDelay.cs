@@ -10,11 +10,15 @@ namespace Framejet.Core.Audio
         public double BufferP95Ms { get; set; }
         public double OutputMs { get; set; }
 
-        /// <summary>"normal" or "low-latency".</summary>
+        /// <summary>"normal", "low-latency" (both ends), or "low-latency capture" / "low-latency output" (one end).</summary>
         public string Mode { get; set; }
 
         public double PeriodMs { get; set; }
+        /// <summary>Underruns since the stats were last reset.</summary>
         public int Underruns { get; set; }
+
+        /// <summary>Underruns before the stats were last reset, since playback started: for the self-test, its start-up.</summary>
+        public int StartupUnderruns { get; set; }
 
         public double TotalMeanMs => CaptureMs + BufferMeanMs + OutputMs;
         public double TotalP95Ms => CaptureMs + BufferP95Ms + OutputMs;
@@ -29,7 +33,8 @@ namespace Framejet.Core.Audio
                 + " = " + TotalMeanMs.ToString("0.0", c)
                 + " ms (p95 " + TotalP95Ms.ToString("0.0", c) + ")"
                 + "; mode=" + Mode + " " + PeriodMs.ToString("0.00", c)
-                + " ms; underruns=" + Underruns.ToString(c);
+                + " ms; underruns=" + (Underruns + StartupUnderruns).ToString(c)
+                + " (start-up " + StartupUnderruns.ToString(c) + ")";
         }
     }
 }

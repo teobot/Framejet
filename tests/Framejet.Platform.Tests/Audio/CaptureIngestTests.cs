@@ -26,6 +26,8 @@ namespace Framejet.Platform.Tests.Audio
 
         static double LevelMs(BufferedWaveProvider buf) => buf.BufferedBytes * 1000.0 / buf.WaveFormat.AverageBytesPerSecond;
 
+        static TimeSpan Ms(double ms) => TimeSpan.FromTicks((long)(ms * 10000));
+
         [Fact]
         public void Prefill_holds_silence_until_target()
         {
@@ -135,14 +137,15 @@ namespace Framejet.Platform.Tests.Audio
         /// <summary>
         /// Capture and playback in lockstep on one engine clock, as with a card and an output on the same Windows
         /// audio engine: each 10 ms step a packet lands and playback reads 10 ms through the real chain. Every
-        /// <paramref name="jitterEvery"/> steps a packet arrives before the read instead of after it.
+        /// <paramref name="jitterEvery"/> steps a packet arrives before the read instead of after it. The controller
+        /// is the backend's for 10 ms streams: 13 ms of headroom, so 23 ms right after a packet.
         /// </summary>
         static (double MeanMs, double FinalMs, int Underruns, double TargetMs) Lockstep(int standingPackets, int seconds, int jitterEvery)
         {
             long now = 1;
             var fmt = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
             var buf = new BufferedWaveProvider(fmt) { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true, ReadFully = true };
-            var drift = new DriftController();
+            var drift = DriftController.ForStreams(Ms(10), Ms(10));
             var ingest = new CaptureIngest(buf, fmt, drift, NullLog.Instance, () => now);
             var chain = PlaythroughChain.ToWaveProvider(PlaythroughChain.Build(ingest.Output, fmt, out _, out var resampler), fmt);
             ingest.Resampler = resampler;
@@ -164,21 +167,22 @@ namespace Framejet.Platform.Tests.Audio
         }
 
         [Fact]
-        public void Locked_clocks_hold_one_packet_without_underruns()
+        public void Locked_clocks_hold_the_headroom_without_underruns()
         {
-            var r = Lockstep(standingPackets: 1, seconds: 60, jitterEvery: 50);
+            var r = Lockstep(standingPackets: 3, seconds: 60, jitterEvery: 50);
             Assert.Equal(0, r.Underruns);
-            Assert.Equal(10, r.TargetMs);
-            Assert.True(r.MeanMs <= 10.5, $"mean level {r.MeanMs:0.00} ms");
+            Assert.Equal(13, r.TargetMs, 3);
+            Assert.True(r.MeanMs <= 23.5, $"mean level {r.MeanMs:0.00} ms");
         }
 
         [Fact]
         public void A_standing_excess_drains_into_the_band_without_underruns()
         {
-            var r = Lockstep(standingPackets: 2, seconds: 40, jitterEvery: 50); // starts 10 ms above the target
+            var r = Lockstep(standingPackets: 4, seconds: 40, jitterEvery: 50); // starts 10 ms above the target
             Assert.Equal(0, r.Underruns);
-            Assert.Equal(10, r.TargetMs);
-            Assert.InRange(r.FinalMs, 10.0, 10.0 + DriftController.HoldBand.TotalMilliseconds + 0.25);
+            Assert.Equal(13, r.TargetMs, 3);
+            double band = DriftController.HoldBand.TotalMilliseconds;
+            Assert.InRange(r.FinalMs, 23 - band - 0.25, 23 + band + 0.25);
         }
 
         /// <summary>
@@ -186,12 +190,12 @@ namespace Framejet.Platform.Tests.Audio
         /// Every 7th period the packet lands after the read instead of before it.
         /// </summary>
         [Fact]
-        public void Short_periods_hold_the_10ms_target_without_underruns()
+        public void Short_periods_hold_their_headroom_without_underruns()
         {
             long now = 1;
             var fmt = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
             var buf = new BufferedWaveProvider(fmt) { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true, ReadFully = true };
-            var drift = new DriftController();
+            var drift = DriftController.ForStreams(Ms(128 / 48.0), Ms(128 / 48.0));
             var ingest = new CaptureIngest(buf, fmt, drift, NullLog.Instance, () => now);
             var chain = PlaythroughChain.ToWaveProvider(PlaythroughChain.Build(ingest.Output, fmt, out _, out var resampler), fmt);
             ingest.Resampler = resampler;
@@ -209,18 +213,23 @@ namespace Framejet.Platform.Tests.Audio
             }
             var d = ingest.Snapshot(false).Delay;
             Assert.Equal(0, ingest.Underruns);
-            Assert.Equal(10, drift.Target.TotalMilliseconds);
-            Assert.InRange(d.BufferMeanMs, 9.5, 13.5);
-            Assert.InRange(d.BufferP95Ms, 9.5, 14.0);
+            Assert.Equal(5.667, drift.Target.TotalMilliseconds, 3); // one 2.67 ms output period plus the 3 ms margin
+            // The late packets set the minimum: on time, the ring holds one more period than that headroom before a packet.
+            Assert.InRange(d.BufferMeanMs, 9.5, 11.5);
+            Assert.InRange(d.BufferP95Ms, 9.5, 11.5);
         }
 
         [Fact]
         public void Pushes_the_ratio_to_the_resampler()
         {
-            var ingest = Make(out _, out _);
+            long now = 1;
+            var ingest = Make(out _, out _, () => now);
             var resampler = new VariableRateResampler(new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(48000, 2)).ToSampleProvider(), 48000);
             ingest.Resampler = resampler;
-            ingest.Process(Chunk(50), 48 * 50 * 8); // 50 ms against a 10 ms target: full speed-up
+            ingest.Process(Chunk(50), 48 * 50 * 8); // primes with no headroom before it: full slow-down
+            Assert.Equal(0.995, resampler.Ratio, 6);
+            now += System.Diagnostics.Stopwatch.Frequency * 11 / 10; // past the 1 s window
+            ingest.Process(Chunk(10), 48 * 10 * 8); // 50 ms of headroom against a 10 ms target: full speed-up
             Assert.Equal(1.005, resampler.Ratio, 6);
         }
 

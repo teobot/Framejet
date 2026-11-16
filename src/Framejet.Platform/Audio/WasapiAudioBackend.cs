@@ -156,22 +156,22 @@ namespace Framejet.Platform.Audio
             Failed?.Invoke(message);
         }
 
-        // From the audio thread: low-latency mode underran too often, and the registry has fallen back its endpoints.
+        // From an audio thread: an endpoint's low-latency stream underran too often, and the registry has fallen it back.
         // Restart on the thread that started the session (the UI thread in the app), quietly: the user hears a short
-        // gap, sees no warning, and the log gets one line.
-        void FallBack(Session from)
+        // gap, sees no warning, and the log gets one line. The new session opens that endpoint in normal mode.
+        void FallBack(Session from, string endpointName)
         {
             var context = _context;
-            SendOrPostCallback restart = _ => RestartInNormalMode(from);
+            SendOrPostCallback restart = _ => RestartAfterFallBack(from, endpointName);
             if (context != null) context.Post(restart, null);
             else ThreadPool.QueueUserWorkItem(_ => restart(null));
         }
 
-        void RestartInNormalMode(Session from)
+        void RestartAfterFallBack(Session from, string endpointName)
         {
             lock (_sync) { if (!ReferenceEquals(_session, from)) return; }
-            _log.Info("Low-latency audio underran more than " + LowLatencyRegistry.AllowedUnderruns + " times in "
-                + LowLatencyRegistry.Window.TotalSeconds + " s; restarting in normal mode");
+            _log.Info("Low-latency audio on " + endpointName + " underran more than " + LowLatencyRegistry.AllowedUnderruns + " times in "
+                + LowLatencyRegistry.Window.TotalSeconds + " s; restarting it in normal mode");
             try { Start(from.Input, from.Output, from.Volume.Volume); }
             catch (Exception ex)
             {
@@ -209,99 +209,112 @@ namespace Framejet.Platform.Audio
             public AudioInputInfo Input { get; }
             public AudioOutputInfo Output { get; }
 
-            bool LowLatency => _llCapture != null;
+            string Mode => _llCapture != null && _llRender != null ? "low-latency"
+                : _llCapture != null ? "low-latency capture"
+                : _llRender != null ? "low-latency output"
+                : "normal";
+
+            delegate T TryOpenStream<T>(string id, out string whyNot, ILog log);
 
             /// <summary>
-            /// Opens both ends in low-latency mode, or neither. The buffer's 10 ms target covers one short capture packet
-            /// plus the output's short reads; with one end at 10 ms periods it doesn't. A 10 ms capture packet feeding
-            /// 2 ms output reads leaves the ring empty just before each packet, and it underran 7 times in 5 s.
-            /// An end that can't is remembered by the registry, so later starts don't try again.
+            /// Opens one endpoint in low-latency mode unless the registry rules it out; null means use normal mode.
+            /// Each end decides for itself: the buffer's headroom target follows the output period and its prefill the
+            /// capture period, so a 10 ms end beside a low-latency one is fine.
             /// </summary>
-            void OpenLowLatency()
+            T TryLowLatency<T>(string id, string name, TryOpenStream<T> open) where T : class
             {
                 var registry = _owner._lowLatency;
-                var log = _owner._log;
-                if (!registry.ShouldTry(Input.Id) || !registry.ShouldTry(Output.Id)) return;
-                var capture = LowLatencyCapture.TryOpen(Input.Id, out string whyNot, log);
-                if (capture == null)
+                if (!registry.ShouldTry(id)) return null;
+                var stream = open(id, out string whyNot, _owner._log);
+                if (stream == null)
                 {
-                    registry.Unsupported(Input.Id);
-                    log.Info("Low-latency audio unavailable on " + Input.Name + ": " + whyNot + "; using normal mode");
-                    return;
+                    registry.Unsupported(id);
+                    _owner._log.Info("Low-latency audio unavailable on " + name + ": " + whyNot + "; using normal mode");
                 }
-                var render = LowLatencyRender.TryOpen(Output.Id, out whyNot, log);
-                if (render == null)
-                {
-                    capture.Dispose();
-                    registry.Unsupported(Output.Id);
-                    log.Info("Low-latency audio unavailable on " + Output.Name + ": " + whyNot + "; using normal mode");
-                    return;
-                }
-                _llCapture = capture;
-                _llRender = render;
+                return stream;
             }
 
             public void Open(float gain)
             {
                 _enumerator = new MMDeviceEnumerator();
-                OpenLowLatency();
+                _llCapture = TryLowLatency<LowLatencyCapture>(Input.Id, Input.Name, LowLatencyCapture.TryOpen);
+                _llRender = TryLowLatency<LowLatencyRender>(Output.Id, Output.Name, LowLatencyRender.TryOpen);
 
-                if (LowLatency)
+                if (_llCapture != null)
                 {
                     _captureFormat = _llCapture.WaveFormat;
+                    _capturePeriodMs = _llCapture.PeriodMs;
                 }
                 else
                 {
                     _inDevice = _enumerator.GetDevice(Input.Id);
                     _capture = new WasapiCapture(_inDevice, true, CaptureBufferMs);
                     _captureFormat = _capture.WaveFormat;
+                    _capturePeriodMs = CaptureBufferMs; // its packets; the live client's period replaces this once it runs
                 }
+
+                WaveFormat mix;
+                if (_llRender != null)
+                {
+                    mix = _llRender.MixFormat;
+                    _outputPeriodMs = _llRender.PeriodMs;
+                }
+                else
+                {
+                    _outDevice = _enumerator.GetDevice(Output.Id);
+                    _out = new WasapiOut(_outDevice, AudioClientShareMode.Shared, true, OutputLatencyMs);
+                    using (var client = _outDevice.AudioClient) // each AudioClient access activates a new client
+                    {
+                        mix = client.MixFormat;
+                        _outputPeriodMs = client.DefaultDevicePeriod / 10000.0;
+                    }
+                    if (_outputPeriodMs <= 0) _outputPeriodMs = OutputLatencyMs;
+                }
+
                 _buffer = new BufferedWaveProvider(PlaythroughChain.FloatFormatFor(_captureFormat))
                 {
                     BufferDuration = TimeSpan.FromMilliseconds(500),
                     DiscardOnBufferOverflow = true,
                     ReadFully = true
                 };
-                _ingest = new CaptureIngest(_buffer, _captureFormat, new DriftController(), _owner._log)
+                var drift = DriftController.ForStreams(TimeSpan.FromTicks((long)(_capturePeriodMs * 10000)), TimeSpan.FromTicks((long)(_outputPeriodMs * 10000)));
+                _ingest = new CaptureIngest(_buffer, _captureFormat, drift, _owner._log)
                     { BlockPeakTap = _owner._blockPeakTap };
-                if (LowLatency)
+                _owner._log.Info(FormattableString.Invariant($"Audio buffer headroom target {drift.Target.TotalMilliseconds:0.00} ms (output period {_outputPeriodMs:0.00} ms + {DriftController.HeadroomMargin.TotalMilliseconds:0.00} ms), capture period {_capturePeriodMs:0.00} ms"));
+
+                if (_llCapture != null || _llRender != null) _ingest.CountedUnderrun = OnCountedUnderrun;
+                if (_llCapture != null)
                 {
-                    _ingest.CountedUnderrun = OnCountedUnderrun;
                     _llCapture.DataAvailable += (buffer, count) => { if (!_disposed) _ingest.Process(buffer, count); };
                     _llCapture.Stopped += e => _owner.RaiseFailed(this, e.Message);
+                    _llCapture.Glitch += () => OnDeviceGlitch(Input.Id, Input.Name);
                 }
                 else
                 {
                     _capture.DataAvailable += (s, e) => { if (ReferenceEquals(s, _capture)) { if (!_disposed) _ingest.Process(e.Buffer, e.BytesRecorded); } };
                     _capture.RecordingStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _capture)) _owner.RaiseFailed(this, e.Exception.Message); };
                 }
-
-                VolumeSampleProvider volume;
-                WaveFormat mix;
-                if (LowLatency)
+                if (_llRender != null)
                 {
                     _llRender.Stopped += e => _owner.RaiseFailed(this, e.Message);
-                    mix = _llRender.MixFormat;
+                    _llRender.Glitch += () => OnDeviceGlitch(Output.Id, Output.Name);
                 }
                 else
                 {
-                    _outDevice = _enumerator.GetDevice(Output.Id);
-                    _out = new WasapiOut(_outDevice, AudioClientShareMode.Shared, true, OutputLatencyMs);
                     _out.PlaybackStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _out)) _owner.RaiseFailed(this, e.Exception.Message); };
-                    using (var client = _outDevice.AudioClient) mix = client.MixFormat; // each AudioClient access activates a new client
                 }
-                var chain = PlaythroughChain.Build(_ingest.Output, mix, out volume, out var resampler);
+
+                var chain = PlaythroughChain.Build(_ingest.Output, mix, out var volume, out var resampler);
                 _ingest.Resampler = resampler;
                 Volume = volume;
                 volume.Volume = gain;
                 _padding = new OutputPaddingSampler(PlaythroughChain.ToWaveProvider(chain, mix), mix.SampleRate);
-                if (LowLatency)
+                if (_llRender != null)
                 {
                     _llRender.Init(_padding);
                     var render = _llRender;
                     _padding.Padding = () => render.CurrentPaddingFrames;
                     _outStreamMs = render.StreamLatencyMs;
-                    _outputPeriodMs = render.PeriodMs;
                     _outputSource = "low-latency stream";
                 }
                 else
@@ -313,34 +326,43 @@ namespace Framejet.Platform.Audio
 
             public void Begin()
             {
-                if (LowLatency)
+                if (_llRender != null) _llRender.Play(); else _out.Play();
+                if (_llCapture != null)
                 {
-                    _llRender.Play();
                     _llCapture.Start();
                     _captureMs = _llCapture.PeriodMs + _llCapture.StreamLatencyMs;
-                    _capturePeriodMs = _llCapture.PeriodMs;
                     _captureSource = "low-latency stream";
                 }
                 else
                 {
-                    _out.Play();
                     _capture.StartRecording();
                     ReadCaptureClient();
                 }
                 _owner._log.Info("Audio delay figures: capture=" + _captureSource + ", output=" + _outputSource);
-                if (LowLatency)
-                    _owner._log.Info(FormattableString.Invariant($"Audio low-latency mode: capture period {_capturePeriodMs:0.00} ms, output period {_outputPeriodMs:0.00} ms, output buffer {_llRender.BufferFrames} frames"));
+                _owner._log.Info(FormattableString.Invariant($"Audio mode: {Mode}; capture {(_llCapture != null ? "low-latency" : "normal")} {_capturePeriodMs:0.00} ms, output {(_llRender != null ? "low-latency" : "normal")} {_outputPeriodMs:0.00} ms")
+                    + (_llRender != null ? ", output buffer " + _llRender.BufferFrames + " frames" : ""));
             }
 
-            // On the output thread, for each underrun that counts (capture delivering, past the settle time).
+            // On a stream thread: the device itself glitched (an output wake with nothing queued, a capture discontinuity).
+            // It counts against that endpoint only, under the same filter as ring underruns.
+            void OnDeviceGlitch(string endpointId, string endpointName)
+            {
+                if (_ingest.CountsNow(out long now)) Count(endpointId, endpointName, now);
+            }
+
+            // On the output thread, for each ring underrun that counts (capture delivering, past the settle time). Either
+            // low-latency end may be the cause, so each is counted.
             void OnCountedUnderrun(long stopwatchTicks)
             {
+                if (_llCapture != null) Count(Input.Id, Input.Name, stopwatchTicks);
+                if (_llRender != null) Count(Output.Id, Output.Name, stopwatchTicks);
+            }
+
+            void Count(string endpointId, string endpointName, long stopwatchTicks)
+            {
                 var now = TimeSpan.FromTicks((long)(stopwatchTicks * ((double)TimeSpan.TicksPerSecond / Stopwatch.Frequency)));
-                // Either end may be the cause, and neither can run low-latency alone, so both are counted.
-                var registry = _owner._lowLatency;
-                bool fellBack = registry.Underrun(Input.Id, now);
-                fellBack |= registry.Underrun(Output.Id, now);
-                if (fellBack && Interlocked.Exchange(ref _fellBack, 1) == 0) _owner.FallBack(this);
+                if (_owner._lowLatency.Underrun(endpointId, now) && Interlocked.Exchange(ref _fellBack, 1) == 0)
+                    _owner.FallBack(this, endpointName);
             }
 
             public void SetBlockPeakTap(Action<long, float> tap) => _ingest.BlockPeakTap = tap;
@@ -351,11 +373,12 @@ namespace Framejet.Platform.Audio
                 var d = s.Delay;
                 d.CaptureMs = _captureMs;
                 d.OutputMs = _outStreamMs + _padding.MeanPaddingMs(reset);
-                d.Mode = LowLatency ? "low-latency" : "normal";
-                // Normal mode reports the capture period, as before; in low-latency mode the longer of the two ends'.
-                d.PeriodMs = LowLatency ? Math.Max(_capturePeriodMs, _outputPeriodMs) : _capturePeriodMs;
+                d.Mode = Mode;
+                // Normal mode reports the capture period, as before; otherwise the longer of the two ends'.
+                d.PeriodMs = _llCapture == null && _llRender == null ? _capturePeriodMs : Math.Max(_capturePeriodMs, _outputPeriodMs);
                 int u = _ingest.Underruns;
                 d.Underruns = u - _underrunBase;
+                d.StartupUnderruns = _underrunBase;
                 if (reset) _underrunBase = u;
                 return s;
             }
@@ -375,7 +398,6 @@ namespace Framejet.Platform.Audio
             void ReadOutputClient()
             {
                 _outStreamMs = OutputLatencyMs;
-                _outputPeriodMs = OutputLatencyMs;
                 var c = LiveClient(_out, "audioClient");
                 if (c == null) return;
                 _padding.Padding = () => c.CurrentPadding;

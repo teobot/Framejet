@@ -63,6 +63,9 @@ namespace Framejet.Platform.Audio
             }
         }
 
+        /// <summary>Raised on the output thread when a wake finds nothing queued after the first fill: the device ran dry.</summary>
+        public event Action Glitch;
+
         /// <summary>Raised on the output thread when the stream breaks (not on Dispose).</summary>
         public event Action<Exception> Stopped;
 
@@ -85,11 +88,13 @@ namespace Framejet.Platform.Audio
             var waits = new WaitHandle[] { _stop, _client.Event };
             int blockAlign = _client.Format.BlockAlign;
             var scratch = new byte[(int)_queueFrames * blockAlign];
+            bool filled = false;
             try
             {
                 while (WaitHandle.WaitAny(waits) != 0)
                 {
                     _client.Client.GetCurrentPadding(out uint padding);
+                    if (padding == 0 && filled) Glitch?.Invoke();
                     if (padding >= _queueFrames) continue;
                     uint frames = _queueFrames - padding;
                     int bytes = (int)frames * blockAlign;
@@ -98,6 +103,7 @@ namespace Framejet.Platform.Audio
                     _render.GetBuffer(frames, out IntPtr data);
                     Marshal.Copy(scratch, 0, data, bytes);
                     _render.ReleaseBuffer(frames, 0);
+                    filled = true;
                 }
             }
             catch (Exception ex)
@@ -112,10 +118,11 @@ namespace Framejet.Platform.Audio
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             _stopping = true;
             _stop.Set();
-            bool exited = LowLatencyClient.Join(_thread, ThreadName, _log);
+            // A thread that won't stop may still be using the COM objects and handles: leave them all to it.
+            if (!LowLatencyClient.Join(_thread, ThreadName, _log)) return;
             CoreAudio.Release(_render);
-            _client.Dispose(releaseEvent: exited);
-            if (exited) _stop.Dispose();
+            _client.Dispose();
+            _stop.Dispose();
         }
     }
 }
