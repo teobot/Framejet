@@ -9,14 +9,16 @@ namespace Framejet.Platform.Video
         public long Arrived { get; set; }
         /// <summary>Frames presented.</summary>
         public long Drawn { get; set; }
-        /// <summary>Frames replaced by a newer one before drawing, or skipped (paused, no window area, device lost).</summary>
+        /// <summary>Frames replaced by a newer one before drawing, or skipped (paused, no window area, device lost, or no display-queue slot within the wait: 4 ms by default, 1 s with never-skip or V-Sync Off).</summary>
         public long Dropped { get; set; }
         /// <summary>Frames drawn per second over the last second: the intervals between them over the time they span (59.94, not 60).</summary>
         public double MeasuredFps { get; set; }
         /// <summary>Display refresh rate from the vblank counter; 0 until measured.</summary>
         public double RefreshHz { get; set; }
-        /// <summary>Frame arrival to the Present call; the last 2,000 frames.</summary>
+        /// <summary>Frame arrival to the wait before Present: Framejet's own work, skipped frames included; the last 2,000 frames.</summary>
         public TimingStats ArrivalToPresent { get; set; } = TimingStats.Empty;
+        /// <summary>The wait for the display queue before Present, for presented frames; the last 2,000 frames.</summary>
+        public TimingStats QueueWait { get; set; } = TimingStats.Empty;
         /// <summary>Present call to on screen, from exact DXGI samples while measuring; tearing presents are left out.</summary>
         public TimingStats PresentToScreen { get; set; } = TimingStats.Empty;
         /// <summary>Presents shown by direct scanout (overlay) while measuring.</summary>

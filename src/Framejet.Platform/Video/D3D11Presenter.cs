@@ -23,7 +23,12 @@ namespace Framejet.Platform.Video
         const int BufferCount = 2;
         const Format BufferFormat = Format.B8G8R8A8_UNorm;
         const SwapChainFlags AllowTearingFlag = (SwapChainFlags)2048; // DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
+        const SwapChainFlags LatencyWaitableFlag = (SwapChainFlags)0x40; // DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT
         const PresentFlags AllowTearingPresent = (PresentFlags)0x200; // DXGI_PRESENT_ALLOW_TEARING
+        const uint SkipAfterWaitMs = 4;   // V-Sync On, default: skip the frame when the display queue is still busy after this
+        const uint LongWaitMs = 1000;     // every other mode: wait this long at most, then skip the frame
+        const uint StuckQueueMs = 1000;   // no slot for this long while frames keep arriving: the queue is stuck
+        const int InvalidCall = unchecked((int)0x887A0001);           // DXGI_ERROR_INVALID_CALL
         const int DeviceRemoved = unchecked((int)0x887A0005);         // DXGI_ERROR_DEVICE_REMOVED
         const int DeviceHung = unchecked((int)0x887A0006);            // DXGI_ERROR_DEVICE_HUNG
         const int DeviceReset = unchecked((int)0x887A0007);           // DXGI_ERROR_DEVICE_RESET
@@ -53,6 +58,12 @@ namespace Framejet.Platform.Video
         [return: MarshalAs(UnmanagedType.Bool)]
         static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
 
+        [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+        [DllImport("kernel32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool CloseHandle(IntPtr handle);
+
         [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
         [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
 
@@ -70,6 +81,10 @@ namespace Framejet.Platform.Video
         FrameRenderer _renderer;
         IntPtr _media;
         GetFrameStatisticsMediaFn _getFrameStatisticsMedia;
+        IntPtr _latencyWait; // the swap chain's frame-latency waitable object; zero when it has none
+        bool _noLatencyWaitLogged, _stuckQueueLogged, _recreatingStuckQueue;
+        readonly LatencyWaiter _latency;
+        int _swapChainRecreates;
 
         // Render thread state.
         Thread _thread;
@@ -91,9 +106,9 @@ namespace Framejet.Platform.Video
         uint _lastStatsPresentCount, _lastStatsSyncCount, _lastExactPresent;
 
         // Set from the UI thread, read by the render thread.
-        volatile bool _vsync = true, _paused, _measureLatency, _tearingSupported;
+        volatile bool _vsync = true, _neverSkip, _paused, _measureLatency, _tearingSupported;
         volatile ScalingMode _scaling = ScalingMode.Fill;
-        int _simulateDeviceLost;
+        int _simulateDeviceLost, _simulatePresentFailure, _simulateLostQueueCount;
         long _firstPresent; // written by the render thread once per start, read from any thread
 
         // Stats, guarded by _statsLock.
@@ -101,6 +116,7 @@ namespace Framejet.Platform.Video
         long _drawn, _skipped, _publishedAtReset, _replacedAtReset, _resetTime;
         int _overlay, _composed, _deviceResets;
         readonly SampleRing _arrivalToPresent = new SampleRing(MaxSamples);
+        readonly SampleRing _queueWait = new SampleRing(MaxSamples);
         readonly SampleRing _presentToScreen = new SampleRing(MaxSamples);
         readonly long[] _drawTimes = new long[1024];
         int _drawTimesNext, _drawTimesCount;
@@ -112,6 +128,7 @@ namespace Framejet.Platform.Video
             if (hwnd == IntPtr.Zero) throw new ArgumentException("A window handle is needed", nameof(hwnd));
             _hwnd = hwnd;
             _log = log ?? throw new ArgumentNullException(nameof(log));
+            _latency = new LatencyWaiter(WaitForQueue, Stopwatch.GetTimestamp, Stopwatch.Frequency, StuckQueueMs);
             CreateDevice();
         }
 
@@ -120,6 +137,37 @@ namespace Framejet.Platform.Video
 
         /// <summary>On (the default): Present(1) waits for the next refresh. Off: Present(0), tearing when supported.</summary>
         public bool VSync { get => _vsync; set => _vsync = value; }
+
+        /// <summary>
+        /// With V-Sync On: true never skips, waiting up to 1 s for a display-queue slot (a frame is skipped only after that);
+        /// false (the default) skips a frame when the queue stays busy for 4 ms, so one missed refresh doesn't hold every later frame back a refresh.
+        /// </summary>
+        public bool NeverSkipFrames { get => _neverSkip; set => _neverSkip = value; }
+
+        /// <summary>How one frame is presented, and how long it waits for the display queue first.</summary>
+        internal readonly struct PresentPlan
+        {
+            public PresentPlan(int syncInterval, PresentFlags flags, uint waitMs)
+            {
+                SyncInterval = syncInterval;
+                Flags = flags;
+                WaitMs = waitMs;
+            }
+
+            public int SyncInterval { get; }
+            public PresentFlags Flags { get; }
+            /// <summary>The longest wait for the frame-latency waitable object before Present. A frame that gets no slot is skipped.</summary>
+            public uint WaitMs { get; }
+        }
+
+        /// <summary>
+        /// The present for one frame. V-Sync On waits at most 4 ms for a slot in the display queue, or 1 s with never-skip;
+        /// V-Sync Off waits up to 1 s. A frame that gets no slot is skipped. Only V-Sync Off may tear.
+        /// </summary>
+        internal static PresentPlan Plan(bool vsync, bool neverSkip, bool tearingSupported)
+            => vsync
+                ? new PresentPlan(1, PresentFlags.None, neverSkip ? LongWaitMs : SkipAfterWaitMs)
+                : new PresentPlan(0, tearingSupported ? AllowTearingPresent : PresentFlags.None, LongWaitMs);
 
         /// <summary>How the picture is sized in the window. Read once per draw.</summary>
         public ScalingMode Scaling { get => _scaling; set => _scaling = value; }
@@ -152,7 +200,7 @@ namespace Framejet.Platform.Video
             _frameInFlight = false;
             _framesSinceLuma = 0;
             _nextRecreateAttempt = 0;
-            _drawFailureLogged = _lumaFailureLogged = _recreateFailureLogged = false; // a restart logs its own failures
+            _drawFailureLogged = _lumaFailureLogged = _recreateFailureLogged = _stuckQueueLogged = false; // a restart logs its own failures
             Interlocked.Exchange(ref _firstPresent, 0);
             ResetStats();
             _stopRequested = false;
@@ -188,7 +236,7 @@ namespace Framejet.Platform.Video
                 ExpectedFrameBytes = slot?.FrameBytes ?? 0,
                 MismatchedFrameBytes = slot?.FirstMismatchBytes ?? 0,
             };
-            double[] arrivalToPresent, presentToScreen;
+            double[] arrivalToPresent, queueWait, presentToScreen;
             lock (_statsLock)
             {
                 long vblanks = _vblankLastCount - _vblankBaseCount, ticks = _vblankLastQpc - _vblankBaseQpc;
@@ -201,9 +249,11 @@ namespace Framejet.Platform.Video
                 stats.Composed = _composed;
                 stats.DeviceResets = _deviceResets;
                 arrivalToPresent = _arrivalToPresent.ToArray();
+                queueWait = _queueWait.ToArray();
                 presentToScreen = _presentToScreen.ToArray();
             }
             stats.ArrivalToPresent = TimingStats.From(arrivalToPresent);
+            stats.QueueWait = TimingStats.From(queueWait);
             stats.PresentToScreen = TimingStats.From(presentToScreen);
             return stats;
         }
@@ -239,6 +289,7 @@ namespace Framejet.Platform.Video
                 _drawn = _skipped = 0;
                 _overlay = _composed = _deviceResets = 0;
                 _arrivalToPresent.Clear();
+                _queueWait.Clear();
                 _presentToScreen.Clear();
                 _drawTimesNext = _drawTimesCount = 0;
                 _hasVblankBase = false;
@@ -247,6 +298,12 @@ namespace Framejet.Platform.Video
 
         /// <summary>Makes the next present fail with DXGI_ERROR_DEVICE_REMOVED, so the device is recreated.</summary>
         internal void SimulateDeviceLost() => Interlocked.Exchange(ref _simulateDeviceLost, 1);
+
+        /// <summary>Makes the next present fail after its wait for the display queue, with an error that is not a device loss.</summary>
+        internal void SimulatePresentFailure() => Interlocked.Exchange(ref _simulatePresentFailure, 1);
+
+        /// <summary>Takes one slot from the frame-latency waitable object behind the presenter's back, as an unforeseen error would.</summary>
+        internal void SimulateLostQueueCount() => Interlocked.Exchange(ref _simulateLostQueueCount, 1);
 
         public void Dispose()
         {
@@ -269,7 +326,7 @@ namespace Framejet.Platform.Video
 
         void RenderLoop()
         {
-            timeBeginPeriod(1); // makes the 1 ms measuring wait 1 ms, as in the spike
+            timeBeginPeriod(1); // makes the 1 ms measuring wait 1 ms, as in the spike, and the 4 ms queue wait 4 ms
             try
             {
                 var frameReady = _slot.FrameReady;
@@ -350,13 +407,37 @@ namespace Framejet.Platform.Video
             bool vsync = _vsync, tearing = !vsync && _tearingSupported;
             if (Interlocked.Exchange(ref _simulateDeviceLost, 0) != 0)
                 throw new SharpDXException(new Result(DeviceRemoved), "Simulated device loss");
+            var plan = Plan(vsync, _neverSkip, _tearingSupported);
+            long waitStart = Stopwatch.GetTimestamp();
+            RecordArrivalToPresent(arrival, waitStart); // Framejet's own work; the wait for the display queue is QueueWait
+            if (Interlocked.Exchange(ref _simulateLostQueueCount, 0) != 0) WaitForQueue(LongWaitMs);
+            var slot = _latency.BeforePresent(plan.WaitMs);
+            if (slot != QueueSlot.Taken)
+            {
+                // The frame before is still queued after a missed refresh. Presenting would queue this one a refresh late,
+                // and every later frame behind it; skipping lets the queued frame show and the next one land on time.
+                _frameInFlight = false;
+                CountSkipped();
+                if (slot == QueueSlot.Stuck) RecreateForStuckQueue();
+                else if (measuring) PollStats();
+                return;
+            }
             long presentTime = Stopwatch.GetTimestamp();
-            if (vsync) _swapChain.Present(1, PresentFlags.None);
-            else _swapChain.Present(0, tearing ? AllowTearingPresent : PresentFlags.None);
+            try
+            {
+                if (Interlocked.Exchange(ref _simulatePresentFailure, 0) != 0)
+                    throw new SharpDXException(new Result(InvalidCall), "Simulated present failure");
+                _swapChain.Present(plan.SyncInterval, plan.Flags);
+            }
+            catch
+            {
+                _latency.PresentFailed();
+                throw;
+            }
             if (Interlocked.Read(ref _firstPresent) == 0) Interlocked.Exchange(ref _firstPresent, Stopwatch.GetTimestamp());
             _frameInFlight = false;
             _drawFailureLogged = false;
-            RecordDrawn(arrival, presentTime);
+            RecordDrawn(waitStart, presentTime);
 
             if (measuring)
             {
@@ -391,13 +472,19 @@ namespace Framejet.Platform.Video
             return true;
         }
 
-        void RecordDrawn(long arrival, long presentTime)
+        void RecordArrivalToPresent(long arrival, long waitStart)
         {
-            double arrivalToPresentMs = (presentTime - arrival) * MsPerTick;
+            double arrivalToPresentMs = (waitStart - arrival) * MsPerTick;
+            lock (_statsLock) _arrivalToPresent.Add(arrivalToPresentMs);
+        }
+
+        void RecordDrawn(long waitStart, long presentTime)
+        {
+            double queueWaitMs = (presentTime - waitStart) * MsPerTick;
             lock (_statsLock)
             {
                 _drawn++;
-                _arrivalToPresent.Add(arrivalToPresentMs);
+                _queueWait.Add(queueWaitMs);
                 _drawTimes[_drawTimesNext] = presentTime;
                 _drawTimesNext = (_drawTimesNext + 1) % _drawTimes.Length;
                 if (_drawTimesCount < _drawTimes.Length) _drawTimesCount++;
@@ -509,6 +596,7 @@ namespace Framejet.Platform.Video
             }
             catch (SharpDXException) { }
             _log.Error($"Direct3D device lost (0x{error.ResultCode.Code:X8}{reason})", error);
+            _recreatingStuckQueue = false;
             ReleaseDevice();
             if (_stopRequested) return; // stopping anyway: Start creates a device if the presenter runs again
             _nextRecreateAttempt = 0;
@@ -534,14 +622,35 @@ namespace Framejet.Platform.Video
                 return false;
             }
             _recreateFailureLogged = false;
+            bool stuckQueue = _recreatingStuckQueue;
+            _recreatingStuckQueue = false;
             lock (_statsLock)
             {
-                _deviceResets++;
+                if (!stuckQueue) _deviceResets++;
                 _hasVblankBase = false; // a new swap chain starts its own counts
             }
-            _log.Info("Direct3D device recreated after a device loss");
+            if (stuckQueue) Interlocked.Increment(ref _swapChainRecreates);
+            else _log.Info("Direct3D device recreated after a device loss");
             return true;
         }
+
+        /// <summary>
+        /// No slot has come from the display queue for 1 s while frames kept arriving: a slot was lost to an error not
+        /// foreseen. A new swap chain has a new waitable object, so recreate the device and swap chain, shaders included,
+        /// through the device-loss path, without counting a device reset.
+        /// </summary>
+        void RecreateForStuckQueue()
+        {
+            if (!_stuckQueueLogged) _log.Info("The display queue gave no frame slot for 1 s; recreating the Direct3D device and swap chain");
+            _stuckQueueLogged = true;
+            _recreatingStuckQueue = true;
+            ReleaseDevice();
+            _nextRecreateAttempt = 0;
+            TryRecreateDevice();
+        }
+
+        /// <summary>Times the device and swap chain were recreated because the display queue gave no slot for 1 s, since construction. For tests.</summary>
+        internal int SwapChainRecreates => Volatile.Read(ref _swapChainRecreates);
 
         /// <summary>How long the last device creation took in total, in its swap chain, and in its shaders (all in ms). Diagnostic.</summary>
         public double CreateDeviceMs { get; private set; }
@@ -570,6 +679,7 @@ namespace Framejet.Platform.Video
                 _bufferHeight = height;
                 _backBufferView = CreateBackBufferView();
                 OpenSwapChainMedia();
+                OpenLatencyWait();
                 _renderer = new FrameRenderer(_device);
                 CreateShadersMs = _renderer.ShaderMs;
                 CreateDeviceMs = timer.Elapsed.TotalMilliseconds;
@@ -588,7 +698,7 @@ namespace Framejet.Platform.Video
                 Width = width, Height = height, Format = BufferFormat, Stereo = false,
                 SampleDescription = new SampleDescription(1, 0), Usage = Usage.RenderTargetOutput,
                 BufferCount = BufferCount, Scaling = SharpDX.DXGI.Scaling.Stretch, SwapEffect = SwapEffect.FlipDiscard,
-                AlphaMode = AlphaMode.Ignore, Flags = AllowTearingFlag,
+                AlphaMode = AlphaMode.Ignore, Flags = AllowTearingFlag | LatencyWaitableFlag,
             };
             SwapChain1 swapChain;
             try
@@ -597,13 +707,36 @@ namespace Framejet.Platform.Video
             }
             catch (SharpDXException)
             {
-                description.Flags = SwapChainFlags.None;
+                description.Flags = LatencyWaitableFlag;
                 swapChain = new SwapChain1(factory, _device, _hwnd, ref description);
             }
             _swapChainFlags = description.Flags;
-            _tearingSupported = description.Flags == AllowTearingFlag;
+            _tearingSupported = (description.Flags & AllowTearingFlag) != 0;
             return swapChain;
         }
+
+        /// <summary>
+        /// Keeps the swap chain's frame-latency waitable object, signalled when the frame before has left the display
+        /// queue. Without it, frames are presented without waiting.
+        /// </summary>
+        void OpenLatencyWait()
+        {
+            using (var swapChain2 = _swapChain.QueryInterfaceOrNull<SwapChain2>())
+            {
+                if (swapChain2 == null)
+                {
+                    if (!_noLatencyWaitLogged) _log.Info("IDXGISwapChain2 is not available, so frames are presented without waiting for the display queue");
+                    _noLatencyWaitLogged = true;
+                    return;
+                }
+                swapChain2.MaximumFrameLatency = 1;
+                _latencyWait = swapChain2.FrameLatencyWaitableObject;
+            }
+        }
+
+        /// <summary>Waits on the frame-latency waitable object; without one, returns at once as if it were signalled.</summary>
+        uint WaitForQueue(uint milliseconds)
+            => _latencyWait == IntPtr.Zero ? LatencyWaiter.Signalled : WaitForSingleObject(_latencyWait, milliseconds);
 
         RenderTargetView CreateBackBufferView()
         {
@@ -649,6 +782,12 @@ namespace Framejet.Platform.Video
                 Marshal.Release(_media);
                 _media = IntPtr.Zero;
             }
+            if (_latencyWait != IntPtr.Zero)
+            {
+                CloseHandle(_latencyWait);
+                _latencyWait = IntPtr.Zero;
+            }
+            _latency.Reset();
             _swapChain?.Dispose();
             _swapChain = null;
             if (_context != null)

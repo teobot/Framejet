@@ -202,6 +202,15 @@ namespace Framejet
             _toolbar?.RefreshToggles(); // from the menu as well as from the toolbar
         }
 
+        /// <summary>The Never skip frames menu item: in the settings and the running presenter.</summary>
+        public void ToggleNeverSkipFrames()
+        {
+            if (_closed) return;
+            Settings.NeverSkipFrames = !Settings.NeverSkipFrames;
+            if (VideoBackend != null) VideoBackend.NeverSkipFrames = Settings.NeverSkipFrames;
+            SaveSettings();
+        }
+
         /// <summary>The Scaling choice: in the settings and the running presenter.</summary>
         public void SetScaling(ScalingMode mode)
         {
@@ -323,7 +332,7 @@ namespace Framejet
         void StartDevices()
         {
             _dispatcher = new ControlDispatcher(this);
-            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, Scaling = Settings.Scaling, Paused = WindowState == FormWindowState.Minimized };
+            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, NeverSkipFrames = Settings.NeverSkipFrames, Scaling = Settings.Scaling, Paused = WindowState == FormWindowState.Minimized };
             AudioBackend = new WasapiAudioBackend(Log);
             try
             {

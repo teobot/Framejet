@@ -50,6 +50,9 @@ namespace Framejet
             menu.Items.Add(fullscreen);
             menu.Items.Add(mute);
             menu.Items.Add(Item("V-Sync", form.Settings.VSync, form.ToggleVSync));
+            var neverSkip = Item("Never skip frames", form.Settings.NeverSkipFrames, form.ToggleNeverSkipFrames);
+            neverSkip.Enabled = form.Settings.VSync;
+            menu.Items.Add(neverSkip);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(VideoDevices(form));
             menu.Items.Add(Modes(form));

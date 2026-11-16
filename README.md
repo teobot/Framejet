@@ -21,7 +21,7 @@ Framejet shows what your USB capture card sees, and plays its sound, with as lit
 
 ## Why Framejet
 
-- **Next refresh, every frame.** Framejet adds about 5 ms at 165 Hz. On a 60 Hz screen with V-Sync on, a ~60 fps source often queues behind the previous frame, adding about 30 ms (see [Troubleshooting](#late-picture-on-a-60-hz-screen)).
+- **Next refresh, every frame.** Framejet adds about 5 ms at 165 Hz. On a 60 Hz screen with V-Sync on, Framejet skips an occasional frame so the picture doesn't fall a refresh behind (see [Troubleshooting](#late-picture-on-a-60-hz-screen)).
 - **Nothing to set up.** It finds the card, its best mode and its sound by itself.
 - **It picks back up.** Replug the card (into any USB port) or switch headsets, and it carries on. If OBS takes the card, Rescan takes it back.
 - **One small file.** A single exe with no installer. Settings live in `%AppData%\Framejet`.
@@ -49,7 +49,7 @@ Framejet asks GitHub for the latest release about 10 seconds after it starts, an
 | <kbd>F11</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd> or double-click the picture | Fullscreen on and off |
 | <kbd>Esc</kbd> | Leave fullscreen |
 | <kbd>M</kbd> | Mute and unmute |
-| Right-click | The menu: video device, mode, audio output and input, V-Sync and Rescan devices |
+| Right-click | The menu: video device, mode, audio output and input, V-Sync, Never skip frames and Rescan devices |
 
 In a window, moving the mouse over the picture brings up the toolbar, which fades out 2 s after the mouse stops. Fullscreen shows the picture alone.
 
@@ -79,7 +79,7 @@ Framejet can't see what the console sends. If the PS5 outputs less than the mode
 
 ### Late picture on a 60 Hz screen
 
-On a 60 Hz screen with V-Sync on, a ~60 fps source often queues behind the previous frame, adding about 30 ms. Turn V-Sync off, on the toolbar or in the right-click menu. Frames then go out at once, though the picture can tear. Screens at 144 and 165 Hz aren't affected.
+On a 60 Hz screen a frame that arrives just too late for a refresh shows one refresh later, and the frames behind it follow. With V-Sync on, Framejet clears that by skipping an occasional frame (about 1 to 5%), so the delay stays at about half a refresh plus a few ms (12 to 13 ms at 60 Hz). Now and then a skip causes a brief hitch, usually one extra refresh. To avoid that and keep every frame, at the cost of up to a refresh of extra delay, tick **Never skip frames** in the right-click menu. Turning V-Sync off sends frames at once, though the picture can tear. Screens at 144 and 165 Hz don't skip.
 
 ### Logs
 

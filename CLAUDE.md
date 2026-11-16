@@ -59,13 +59,15 @@ There are three projects, layered so that the logic can be tested without hardwa
 2. `BufferCB` copies each frame into `LatestFrameSlot` and sets the slot's auto-reset event.
 3. The presenter runs its own AboveNormal render thread, which takes the newest frame only on a signalled wake. Taking on unsignalled wakes contends with `BufferCB`'s copy under the slot lock.
 4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling. The player's Scaling choice (Fill, Whole steps, 1:1) picks the rectangle; crisp uses point sampling.
-5. Frames go out on a FLIP_DISCARD swap chain with 2 buffers, maximum frame latency 1 and tearing allowed. V-Sync On is `Present(1)`; V-Sync Off is `Present(0, ALLOW_TEARING)`.
+5. Frames go out on a FLIP_DISCARD swap chain with 2 buffers, maximum frame latency 1, tearing allowed and a frame-latency waitable object. Before each present the render thread takes one slot from the object, waiting 4 ms by default (1 s with Never skip frames or V-Sync Off). V-Sync On is then `Present(1)`; V-Sync Off is `Present(0, ALLOW_TEARING)`.
+   - A timed-out wait skips the frame in every mode, and a failed Present keeps its slot. Never present without a slot: the object is an uncapped semaphore, so a surplus lifts the latency limit for good.
+   - 1 s with no slot while frames keep arriving recreates the device and swap chain; the new swap chain resets the object.
 
 Measurement notes:
 - `MeasureLatency` is on only in the self-test and hardware tests. It makes the render loop wake every 1 ms to sample DXGI frame statistics.
 - Those statistics can undercount vblanks in fullscreen, so the self-test judges its delay bars by the screen's display-mode refresh (`DisplayMode`).
 
-Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queues behind the previous frame, adding ~30 ms. 144 and 165 Hz screens are unaffected.
+At 60 Hz a frame that misses the display's ~4 ms latch shows a refresh later, and later frames queue behind it. Framejet skips one frame to stop that building up, unless Never skip frames is on (right-click menu, `vsync.neverskip`).
 
 ### Audio path
 

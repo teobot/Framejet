@@ -31,6 +31,8 @@ namespace Framejet.Core.Settings
         public float Volume { get; set; } = 1.0f;
         public bool Muted { get; set; }
         public bool VSync { get; set; } = true;
+        /// <summary>With V-Sync On, every frame waits up to 1 s for a display-queue slot instead of being skipped after 4 ms. That costs up to a refresh of extra delay at 60 Hz.</summary>
+        public bool NeverSkipFrames { get; set; }
         public ScalingMode Scaling { get; set; } = ScalingMode.Fill;
         /// <summary>Whether to look for a newer release on start.</summary>
         public bool CheckForUpdates { get; set; } = true;

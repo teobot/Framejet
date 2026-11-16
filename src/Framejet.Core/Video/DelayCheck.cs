@@ -14,6 +14,7 @@ namespace Framejet.Core.Video
     {
         public const double MaxArrivalToPresentP95Ms = 2.5;
         public const double SlackMs = 1.5;
+        public const double MeanSlackMs = 5.5;
 
         static string F(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
         static DelayVerdict Fail(string reason) => new DelayVerdict(false, reason);
@@ -24,7 +25,10 @@ namespace Framejet.Core.Video
             if (arrivalToPresent.Count == 0 || presentToScreen.Count == 0) return Fail("no frames measured");
             if (arrivalToPresent.P95Ms > MaxArrivalToPresentP95Ms)
                 return Fail($"arrival → Present p95 {F(arrivalToPresent.P95Ms)} ms > 2.5 ms");
-            double meanLimit = refresh / 2 + SlackMs;
+            // The expected mean is half a refresh plus the display's latch deadline (the display needs a
+            // frame a few ms before a refresh; ~4 ms measured at 60 Hz), plus the usual 1.5 ms slack.
+            // A frame presented in that window shows a refresh later: the display's latch, not Framejet.
+            double meanLimit = refresh / 2 + MeanSlackMs;
             if (presentToScreen.MeanMs > meanLimit)
                 return Fail($"Present → screen mean {F(presentToScreen.MeanMs)} ms > {F(meanLimit)} ms");
             double p95Limit = refresh + SlackMs;

@@ -242,6 +242,8 @@ namespace Framejet
             Line("video device: " + (video?.Device == null ? "none (none)" : video.Device.Name + " (" + PickText(video.PickReason) + ")"));
             Line("mode: " + (video?.Mode == null ? "none" : video.Mode.Key + " (" + video.Mode.Label + ")"));
             Line("capture format: " + (format == null ? "none" : Invariant($"{format.Width}x{format.Height} {format.Format}")));
+            Line("frame skipping: " + (!_form.Settings.VSync ? "V-Sync off (waits up to 1 s for a slot)"
+                : _form.Settings.NeverSkipFrames ? "never (each frame waits for a slot in the display queue)" : "skip when the display queue stays busy for 4 ms"));
             Line("audio input: " + (sound?.Input?.Name ?? "none") + " (" + SourceText(sound?.InputSource ?? AudioInputSource.None) + ")");
             Line("audio output: " + (sound?.Output?.Name ?? "none") + " (" + (sound == null || sound.OutputIsDefault ? UiText.DefaultOutput : "chosen") + ")");
             Line(Frames("windowed", windowed, _windowedScale));
@@ -264,7 +266,7 @@ namespace Framejet
             => Invariant($"{phase}: frames arrived={s.Arrived} drawn={s.Drawn} dropped={s.Dropped} fps={s.MeasuredFps:0.0} scale={scale ?? "none"}");
 
         static string Delays(string phase, PresenterStats s, int displayHz)
-            => Invariant($"{phase} delay: arrival→Present mean={s.ArrivalToPresent.MeanMs:0.00} p95={s.ArrivalToPresent.P95Ms:0.00} ms; Present→screen mean={s.PresentToScreen.MeanMs:0.00} p95={s.PresentToScreen.P95Ms:0.00} ms; refresh={s.RefreshHz:0.0} Hz ({(displayHz > 0 ? "display " + displayHz + " Hz" : "display unknown")}); overlay={s.Overlay} composed={s.Composed}");
+            => Invariant($"{phase} delay: arrival→Present mean={s.ArrivalToPresent.MeanMs:0.00} p95={s.ArrivalToPresent.P95Ms:0.00} ms; queue wait mean={s.QueueWait.MeanMs:0.00} p95={s.QueueWait.P95Ms:0.00} ms; Present→screen mean={s.PresentToScreen.MeanMs:0.00} p95={s.PresentToScreen.P95Ms:0.00} ms; refresh={s.RefreshHz:0.0} Hz ({(displayHz > 0 ? "display " + displayHz + " Hz" : "display unknown")}); overlay={s.Overlay} composed={s.Composed}");
 
         static string DeviceNames(IReadOnlyList<VideoDeviceInfo> devices)
         {
