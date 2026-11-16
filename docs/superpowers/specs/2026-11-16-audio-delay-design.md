@@ -213,3 +213,13 @@ Notes on the baseline:
 - The live clients were read in all three runs (log: `capture=live client, output=live client`).
 - Over a 4 s run the card's clock drift doesn't show: the buffer sat at its 10 ms packet size with no trims. The 15–60 ms sawtooth the design describes builds over minutes, so a long run is needed to see it.
 - The capture stream reports no added latency of its own beyond its 10 ms buffer.
+| Rate control + 10 ms output (4b75ee2) | normal, 10 ms period | 10.0 | 14.5 / 20.0 (runs: 10.0–17.9) | 12.0 | 36.5 / 42.0 (runs: 32.0, 36.5, 39.9) | 0 | — |
+
+Notes after rate control:
+- **Both chains settle in one of two states.** The pre-change chain, rebuilt and run 6 more times, gave 32.1, 42.0, 32.0, 32.0, 35.1 and 32.0 ms, with 0 underruns. Capture and output events land at almost the same instant each 10 ms period, and their order decides whether the ring holds one packet or two. In the two-packet state, the extra packet covers late capture packets: draining it causes underruns.
+- **So the first baseline (32 ms) was the lucky state.** With 10 ms periods, rate control can't beat it. What rate control gives here:
+  - no trims and no target ratchet
+  - correction of a fast card clock over long sessions
+  - sinc resampling, which also stops the 7–8 dB treble loss the old resampler had at 15 kHz when the rates differed
+- **The phase step shrinks with the period.** Low-latency mode (2.67 ms periods) is where the remaining gain is.
+- **The 64-tap sinc resampler adds about 0.7 ms** of group delay.
