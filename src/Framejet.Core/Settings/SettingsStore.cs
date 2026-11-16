@@ -49,6 +49,7 @@ namespace Framejet.Core.Settings
                         break;
                     case "muted": if (bool.TryParse(value, out var m)) s.Muted = m; break;
                     case "vsync": if (bool.TryParse(value, out var vs)) s.VSync = vs; break;
+                    case "vsync.neverskip": if (bool.TryParse(value, out var ns)) s.NeverSkipFrames = ns; break;
                     case "update.check": if (bool.TryParse(value, out var uc)) s.CheckForUpdates = uc; break;
                     case "window.x": x = ParseInt(value); break;
                     case "window.y": y = ParseInt(value); break;
@@ -85,6 +86,7 @@ namespace Framejet.Core.Settings
             Line("volume", s.Volume.ToString("0.###", inv));
             Line("muted", B(s.Muted));
             Line("vsync", B(s.VSync));
+            Line("vsync.neverskip", B(s.NeverSkipFrames));
             Line("update.check", B(s.CheckForUpdates));
             if (s.Window.HasBounds)
             {

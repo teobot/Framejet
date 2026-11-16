@@ -30,6 +30,8 @@ namespace Framejet.Core.Settings
         public float Volume { get; set; } = 1.0f;
         public bool Muted { get; set; }
         public bool VSync { get; set; } = true;
+        /// <summary>With V-Sync On, every frame waits its turn instead of the newest replacing one not yet shown.</summary>
+        public bool NeverSkipFrames { get; set; }
         /// <summary>Whether to look for a newer release on start.</summary>
         public bool CheckForUpdates { get; set; } = true;
         public WindowPlacement Window { get; set; } = new();
