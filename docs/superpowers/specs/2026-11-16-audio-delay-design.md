@@ -1,6 +1,6 @@
 # Audio delay: measure it, then cut it — design
 
-Status: approved by the owner 2026-11-16. Extends `docs/design.md` §4.5, §4.9 and must-pass 5.
+Status: approved by the owner 2026-11-16. **Outcome:** the measurement shipped. The reduction (§5.3, §5.4) was built, measured and then reverted at the owner's choice; see §11. Extends `docs/design.md` §4.5, §4.9 and must-pass 5.
 
 ## 1. Intent
 
@@ -223,3 +223,20 @@ Notes after rate control:
   - sinc resampling, which also stops the 7–8 dB treble loss the old resampler had at 15 kHz when the rates differed
 - **The phase step shrinks with the period.** Low-latency mode (2.67 ms periods) is where the remaining gain is.
 - **The 64-tap sinc resampler adds about 0.7 ms** of group delay.
+| Low-latency output, normal capture (1e6301b, reverted) | mixed: 10 ms capture, 2 ms output | — | — | — | 27.2, 27.3 ms (4 s); 34.0 ms with 1 underrun (60 s); one run fell back to 44.5 | 0–1 | — |
+| Rate control with glitch-free headroom (1e6301b, reverted) | normal | — | — | — | 44.5–50.8 ms | 0 | — |
+
+## 11. Outcome (owner, 2026-11-16)
+
+The owner chose **measurement only**:
+- **Kept:** the self-test's `audio delay:` line (§5.1) and **Check A/V sync…** (§5.2).
+- **Reverted:** the rate-controlled buffer, the always-on sinc resampler, the low-latency streams and the fallback registry. The audio chain is back to the one described in §3.
+
+Why:
+- **The input can't go low-latency.** The Ripsaw X's HDMI input offers no low-latency period, so only the output side can use it.
+- **The output side alone wasn't reliable.** It reached about 27 ms but fell back intermittently on the virtual mixer.
+- **Glitch-free normal mode cost more delay.** It needed 45–50 ms of added delay, against today's 32–42 ms.
+
+Further notes:
+- **Copy added to the sync check during the build:** "The check stopped: the picture or sound went away." It shows when video or audio stops mid-check.
+- **Open for a future change:** the existing linear resampler loses 7–8 dB at 15 kHz whenever the capture and output rates differ (for example, 48 kHz into a 96 kHz output). The reverted sinc mode fixed that.
