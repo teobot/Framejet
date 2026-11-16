@@ -15,6 +15,14 @@ namespace Framejet.Core.Tests.Video
         [Fact] public void A_slow_handoff_fails()
         { var v = DelayCheck.Evaluate(T(1.0, 3.1), T(3.9, 6.8), 164.85); Assert.False(v.Pass); Assert.Equal("arrival → Present p95 3.10 ms > 2.5 ms", v.Reason); }
         [Fact] public void Limits_scale_with_the_refresh_rate() => Assert.True(DelayCheck.Evaluate(T(1, 1.5), T(9.0, 17.5), 60).Pass);
+        [Fact] public void Sixty_hertz_latch_deadline_passes() => Assert.True(DelayCheck.Evaluate(T(0.7, 0.9), T(11.6, 17.0), 60).Pass);
+        [Fact] public void Mean_bar_allows_four_ms_over_half_a_refresh()
+        {
+            Assert.True(DelayCheck.Evaluate(T(0.9, 1.0), T(7.0, 6.0), 164.85).Pass);
+            var v = DelayCheck.Evaluate(T(0.9, 1.0), T(7.1, 6.0), 164.85);
+            Assert.False(v.Pass);
+            Assert.StartsWith("Present → screen mean 7.10 ms > 7.03 ms", v.Reason);
+        }
         [Fact] public void No_samples_fails() => Assert.Equal("no frames measured", DelayCheck.Evaluate(TimingStats.Empty, TimingStats.Empty, 60).Reason);
     }
 }

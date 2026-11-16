@@ -262,7 +262,7 @@ namespace Framejet
             => Invariant($"{phase}: frames arrived={s.Arrived} drawn={s.Drawn} dropped={s.Dropped} fps={s.MeasuredFps:0.0} scale={scale ?? "none"}");
 
         static string Delays(string phase, PresenterStats s, int displayHz)
-            => Invariant($"{phase} delay: arrival→Present mean={s.ArrivalToPresent.MeanMs:0.00} p95={s.ArrivalToPresent.P95Ms:0.00} ms; Present→screen mean={s.PresentToScreen.MeanMs:0.00} p95={s.PresentToScreen.P95Ms:0.00} ms; refresh={s.RefreshHz:0.0} Hz ({(displayHz > 0 ? "display " + displayHz + " Hz" : "display unknown")}); overlay={s.Overlay} composed={s.Composed}");
+            => Invariant($"{phase} delay: arrival→Present mean={s.ArrivalToPresent.MeanMs:0.00} p95={s.ArrivalToPresent.P95Ms:0.00} ms; queue wait mean={s.QueueWait.MeanMs:0.00} p95={s.QueueWait.P95Ms:0.00} ms; Present→screen mean={s.PresentToScreen.MeanMs:0.00} p95={s.PresentToScreen.P95Ms:0.00} ms; refresh={s.RefreshHz:0.0} Hz ({(displayHz > 0 ? "display " + displayHz + " Hz" : "display unknown")}); overlay={s.Overlay} composed={s.Composed}");
 
         static string DeviceNames(IReadOnlyList<VideoDeviceInfo> devices)
         {
