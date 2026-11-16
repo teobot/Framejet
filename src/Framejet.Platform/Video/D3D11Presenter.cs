@@ -146,20 +146,17 @@ namespace Framejet.Platform.Video
         /// <summary>How one frame is presented, and how long it waits for the display queue first.</summary>
         internal readonly struct PresentPlan
         {
-            public PresentPlan(int syncInterval, PresentFlags flags, uint waitMs, bool skipOnTimeout)
+            public PresentPlan(int syncInterval, PresentFlags flags, uint waitMs)
             {
                 SyncInterval = syncInterval;
                 Flags = flags;
                 WaitMs = waitMs;
-                SkipOnTimeout = skipOnTimeout;
             }
 
             public int SyncInterval { get; }
             public PresentFlags Flags { get; }
-            /// <summary>The longest wait for the frame-latency waitable object before Present.</summary>
+            /// <summary>The longest wait for the frame-latency waitable object before Present. A frame that gets no slot is skipped.</summary>
             public uint WaitMs { get; }
-            /// <summary>Skip the frame when the wait times out. True in every mode: a frame is never presented without a slot.</summary>
-            public bool SkipOnTimeout { get; }
         }
 
         /// <summary>
@@ -168,8 +165,8 @@ namespace Framejet.Platform.Video
         /// </summary>
         internal static PresentPlan Plan(bool vsync, bool neverSkip, bool tearingSupported)
             => vsync
-                ? new PresentPlan(1, PresentFlags.None, neverSkip ? LongWaitMs : SkipAfterWaitMs, skipOnTimeout: true)
-                : new PresentPlan(0, tearingSupported ? AllowTearingPresent : PresentFlags.None, LongWaitMs, skipOnTimeout: true);
+                ? new PresentPlan(1, PresentFlags.None, neverSkip ? LongWaitMs : SkipAfterWaitMs)
+                : new PresentPlan(0, tearingSupported ? AllowTearingPresent : PresentFlags.None, LongWaitMs);
 
         /// <summary>While paused, arriving frames are counted as dropped and not drawn.</summary>
         public bool Paused { get => _paused; set => _paused = value; }
@@ -635,12 +632,12 @@ namespace Framejet.Platform.Video
 
         /// <summary>
         /// No slot has come from the display queue for 1 s while frames kept arriving: a slot was lost to an error not
-        /// foreseen. A new swap chain has a new waitable object, so recreate it through the device-loss path, without
-        /// counting a device reset.
+        /// foreseen. A new swap chain has a new waitable object, so recreate the device and swap chain, shaders included,
+        /// through the device-loss path, without counting a device reset.
         /// </summary>
         void RecreateForStuckQueue()
         {
-            if (!_stuckQueueLogged) _log.Info("The display queue gave no frame slot for 1 s; recreating the swap chain");
+            if (!_stuckQueueLogged) _log.Info("The display queue gave no frame slot for 1 s; recreating the Direct3D device and swap chain");
             _stuckQueueLogged = true;
             _recreatingStuckQueue = true;
             ReleaseDevice();
@@ -648,7 +645,7 @@ namespace Framejet.Platform.Video
             TryRecreateDevice();
         }
 
-        /// <summary>Swap chains recreated because the display queue gave no slot for 1 s, since construction. For tests.</summary>
+        /// <summary>Times the device and swap chain were recreated because the display queue gave no slot for 1 s, since construction. For tests.</summary>
         internal int SwapChainRecreates => Volatile.Read(ref _swapChainRecreates);
 
         /// <summary>How long the last device creation took in total, in its swap chain, and in its shaders (all in ms). Diagnostic.</summary>

@@ -241,7 +241,8 @@ namespace Framejet
             Line("video device: " + (video?.Device == null ? "none (none)" : video.Device.Name + " (" + PickText(video.PickReason) + ")"));
             Line("mode: " + (video?.Mode == null ? "none" : video.Mode.Key + " (" + video.Mode.Label + ")"));
             Line("capture format: " + (format == null ? "none" : Invariant($"{format.Width}x{format.Height} {format.Format}")));
-            Line("frame skipping: " + (_form.Settings.NeverSkipFrames ? "never (each frame waits for a slot in the display queue)" : "skip when the display queue stays busy for 4 ms"));
+            Line("frame skipping: " + (!_form.Settings.VSync ? "V-Sync off (waits up to 1 s for a slot)"
+                : _form.Settings.NeverSkipFrames ? "never (each frame waits for a slot in the display queue)" : "skip when the display queue stays busy for 4 ms"));
             Line("audio input: " + (sound?.Input?.Name ?? "none") + " (" + SourceText(sound?.InputSource ?? AudioInputSource.None) + ")");
             Line("audio output: " + (sound?.Output?.Name ?? "none") + " (" + (sound == null || sound.OutputIsDefault ? UiText.DefaultOutput : "chosen") + ")");
             Line(Frames("windowed", windowed, _windowedScale));

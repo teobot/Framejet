@@ -9,7 +9,7 @@ namespace Framejet.Core.Video
         Taken,
         /// <summary>The wait timed out: skip the frame.</summary>
         Busy,
-        /// <summary>No slot has come for the stuck time while frames kept arriving: skip the frame and recreate the swap chain.</summary>
+        /// <summary>No slot has come for the stuck time while frames kept arriving: skip the frame and recreate the device and swap chain.</summary>
         Stuck,
     }
 

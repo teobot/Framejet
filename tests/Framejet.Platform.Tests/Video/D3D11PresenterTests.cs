@@ -34,25 +34,28 @@ namespace Framejet.Platform.Tests.Video
         [SkippableFact, Trait("Category", "Hardware")] public void Recovers_after_device_loss()
             => WithPresenter((p, slot, f) => { Feed(slot, f, 200); Sta.Pump(TimeSpan.FromSeconds(1)); long before = p.GetStats().Drawn;
                 p.SimulateDeviceLost(); Sta.Pump(TimeSpan.FromSeconds(1.5)); var s = p.GetStats(); Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn - before >= 30); });
+        // Must-pass 8: V-Sync Off never stalls, so its wait for a display-queue slot stays short.
         [SkippableFact, Trait("Category", "Hardware")] public void VSync_off_presents_with_the_tearing_flag_accepted()
-            => WithPresenter((p, slot, f) => { Assert.True(p.TearingSupported); p.VSync = false; Feed(slot, f, 60); Sta.Pump(TimeSpan.FromSeconds(1.5)); Assert.True(p.GetStats().Drawn >= 50); });
+            => WithPresenter((p, slot, f) => { Assert.True(p.TearingSupported); p.VSync = false; Feed(slot, f, 60); Sta.Pump(TimeSpan.FromSeconds(1.5)); var s = p.GetStats();
+                string msg = $"drawn {s.Drawn}, queue wait p95 {s.QueueWait.P95Ms:0.00} ms of {s.QueueWait.Count}";
+                Assert.True(s.Drawn >= 50, msg); Assert.True(s.QueueWait.Count > 0, msg); Assert.True(s.QueueWait.P95Ms < 2, msg); });
 
         [Theory]
-        [InlineData(true, false, true, 1, 0, 4, true)]
-        [InlineData(true, false, false, 1, 0, 4, true)]
-        [InlineData(true, true, true, 1, 0, 1000, true)]
-        [InlineData(true, true, false, 1, 0, 1000, true)]
-        [InlineData(false, false, true, 0, 0x200, 1000, true)]
-        [InlineData(false, true, true, 0, 0x200, 1000, true)]
-        [InlineData(false, false, false, 0, 0, 1000, true)]
-        public void Plans_the_present(bool vsync, bool neverSkip, bool tearing, int interval, int flags, int waitMs, bool skip)
+        [InlineData(true, false, true, 1, 0, 4)]
+        [InlineData(true, false, false, 1, 0, 4)]
+        [InlineData(true, true, true, 1, 0, 1000)]
+        [InlineData(true, true, false, 1, 0, 1000)]
+        [InlineData(false, false, true, 0, 0x200, 1000)]
+        [InlineData(false, true, true, 0, 0x200, 1000)]
+        [InlineData(false, false, false, 0, 0, 1000)]
+        public void Plans_the_present(bool vsync, bool neverSkip, bool tearing, int interval, int flags, int waitMs)
         {
             var plan = D3D11Presenter.Plan(vsync, neverSkip, tearing);
             Assert.Equal(interval, plan.SyncInterval); Assert.Equal(flags, (int)plan.Flags);
-            Assert.Equal(waitMs, (int)plan.WaitMs); Assert.Equal(skip, plan.SkipOnTimeout);
+            Assert.Equal(waitMs, (int)plan.WaitMs);
         }
 
-        [SkippableFact, Trait("Category", "Hardware")] public void Newest_wins_keeps_up_and_survives_toggles_and_device_loss()
+        [SkippableFact, Trait("Category", "Hardware")] public void Keeps_up_and_survives_toggles_and_device_loss()
             => WithPresenter((p, slot, f) => { p.MeasureLatency = true; var feeder = Feed(slot, f, 200); Sta.Pump(TimeSpan.FromSeconds(1));
                 p.NeverSkipFrames = true; Sta.Pump(TimeSpan.FromSeconds(0.5)); p.NeverSkipFrames = false; Sta.Pump(TimeSpan.FromSeconds(0.5));
                 p.SimulateDeviceLost(); Sta.Pump(TimeSpan.FromSeconds(1));
@@ -60,10 +63,10 @@ namespace Framejet.Platform.Tests.Video
                 var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(6)) Sta.Pump(TimeSpan.FromMilliseconds(50));
                 Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
                 Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples");
-                Assert.True(s.QueueWait.Count > 0, "no queue wait samples"); });
+                Assert.True(s.QueueWait.Count > 0, "no queue wait samples"); Assert.Equal(0, p.SwapChainRecreates); });
 
         // A Present that fails after its wait (not a device loss) queues nothing. The slot it took must go to the next frame,
-        // or every later 4 ms wait in the default mode times out until the swap chain is recreated.
+        // or every later 4 ms wait in the default mode times out until the device and swap chain are recreated.
         [SkippableFact, Trait("Category", "Hardware")] public void A_failed_present_does_not_stall_the_default_mode()
             => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulatePresentFailure();
                 var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
@@ -71,8 +74,8 @@ namespace Framejet.Platform.Tests.Video
                 Assert.True(s.Drawn >= 100, msg); Assert.True(s.Dropped <= 6, msg); Assert.Equal(0, p.SwapChainRecreates); });
 
         // A slot lost to an error not foreseen makes every 4 ms wait time out. After 1 s with no slot, the presenter recreates
-        // the swap chain, which resets the waitable object, and drawing resumes. That is not a device loss.
-        [SkippableFact, Trait("Category", "Hardware")] public void Recreates_the_swap_chain_when_no_slot_comes_for_a_second()
+        // the device and swap chain, which resets the waitable object, and drawing resumes. That is not counted as a device loss.
+        [SkippableFact, Trait("Category", "Hardware")] public void Recreates_the_device_and_swap_chain_when_no_slot_comes_for_a_second()
             => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulateLostQueueCount();
                 var since = Stopwatch.StartNew(); Sta.Pump(TimeSpan.FromMilliseconds(100)); long frozenAt = p.GetStats().Drawn; double resumedMs = -1;
                 while (feeder.IsAlive && since.Elapsed < TimeSpan.FromSeconds(8))
@@ -90,7 +93,7 @@ namespace Framejet.Platform.Tests.Video
                 form.Size = new System.Drawing.Size(960, 540); Sta.Pump(TimeSpan.FromSeconds(0.5)); form.Size = new System.Drawing.Size(1280, 720);
                 var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
                 Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
-                Assert.True(s.Drawn >= 100, $"drawn {s.Drawn}, dropped {s.Dropped}"); Assert.Equal(0, s.DeviceResets); });
+                Assert.True(s.Drawn >= 100, $"drawn {s.Drawn}, dropped {s.Dropped}"); Assert.Equal(0, s.DeviceResets); Assert.Equal(0, p.SwapChainRecreates); });
 
         // DelayCheck passes vacuously when RefreshHz is 0, so a broken frame-statistics path must fail here.
         [SkippableFact, Trait("Category", "Hardware")] public void Measures_latency_from_frame_statistics()
