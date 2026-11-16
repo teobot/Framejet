@@ -58,7 +58,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 1. The capture filter feeds a Smart Tee, then a Sample Grabber, then a Null Renderer. The graph has no reference clock (`SetSyncSource(null)`), so nothing waits on timestamps.
 2. `BufferCB` copies each frame into `LatestFrameSlot` and sets the slot's auto-reset event.
 3. The presenter runs its own AboveNormal render thread, which takes the newest frame only on a signalled wake. Taking on unsignalled wakes contends with `BufferCB`'s copy under the slot lock.
-4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling.
+4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling. The player's Scaling choice (Fill, Whole steps, 1:1) picks the rectangle; crisp uses point sampling.
 5. Frames go out on a FLIP_DISCARD swap chain with 2 buffers, maximum frame latency 1 and tearing allowed. V-Sync On is `Present(1)`; V-Sync Off is `Present(0, ALLOW_TEARING)`.
 
 Measurement notes:

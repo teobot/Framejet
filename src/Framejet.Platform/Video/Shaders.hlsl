@@ -1,6 +1,6 @@
 // Framejet video shaders.
 // Pass 1 converts the captured frame to RGB at source size (PS_Nv12, PS_Yuy2, PS_Uyvy, PS_Rgb32).
-// Pass 2 scales that picture into the letterboxed viewport (PS_ScaleCatmullRom, PS_ScaleBilinear).
+// Pass 2 scales that picture into the box the Scaling choice places (PS_ScaleCatmullRom, PS_ScaleBilinear).
 
 cbuffer Convert : register(b0)
 {
@@ -13,7 +13,7 @@ cbuffer Convert : register(b0)
 
 Texture2D tex0 : register(t0);
 Texture2D tex1 : register(t1);
-SamplerState linearClamp : register(s0);
+SamplerState scaleSampler : register(s0);
 
 struct VSOut
 {
@@ -44,7 +44,7 @@ float4 PS_Nv12(VSOut i) : SV_Target
     uint w, h;
     tex0.GetDimensions(w, h);
     float y = tex0.Load(int3(int2(i.pos.xy), 0)).r;
-    float2 c = tex1.Sample(linearClamp, i.uv + float2(0.5 / w, 0)).rg;
+    float2 c = tex1.Sample(scaleSampler, i.uv + float2(0.5 / w, 0)).rg;
     return YuvToRgb(y, c.x, c.y);
 }
 
@@ -86,10 +86,10 @@ float4 PS_Rgb32(VSOut i) : SV_Target
     return float4(tex0.Load(int3(p, 0)).rgb, 1);
 }
 
-// 1:1 or downscaling.
+// 1:1 or downscaling with the linear sampler; also crisp whole-step upscaling, where the sampler is point.
 float4 PS_ScaleBilinear(VSOut i) : SV_Target
 {
-    return float4(tex0.Sample(linearClamp, i.uv).rgb, 1);
+    return float4(tex0.Sample(scaleSampler, i.uv).rgb, 1);
 }
 
 // Upscaling: Catmull-Rom over the 4x4 texels around the sample point, in 9 bilinear taps.
@@ -115,14 +115,14 @@ float4 PS_ScaleCatmullRom(VSOut i) : SV_Target
     float2 t3 = (centre1 + 2.0) / size;
 
     float3 c = 0;
-    c += tex0.SampleLevel(linearClamp, float2(t0.x, t0.y), 0).rgb * (w0.x * w0.y);
-    c += tex0.SampleLevel(linearClamp, float2(t12.x, t0.y), 0).rgb * (w12.x * w0.y);
-    c += tex0.SampleLevel(linearClamp, float2(t3.x, t0.y), 0).rgb * (w3.x * w0.y);
-    c += tex0.SampleLevel(linearClamp, float2(t0.x, t12.y), 0).rgb * (w0.x * w12.y);
-    c += tex0.SampleLevel(linearClamp, float2(t12.x, t12.y), 0).rgb * (w12.x * w12.y);
-    c += tex0.SampleLevel(linearClamp, float2(t3.x, t12.y), 0).rgb * (w3.x * w12.y);
-    c += tex0.SampleLevel(linearClamp, float2(t0.x, t3.y), 0).rgb * (w0.x * w3.y);
-    c += tex0.SampleLevel(linearClamp, float2(t12.x, t3.y), 0).rgb * (w12.x * w3.y);
-    c += tex0.SampleLevel(linearClamp, float2(t3.x, t3.y), 0).rgb * (w3.x * w3.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t0.x, t0.y), 0).rgb * (w0.x * w0.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t12.x, t0.y), 0).rgb * (w12.x * w0.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t3.x, t0.y), 0).rgb * (w3.x * w0.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t0.x, t12.y), 0).rgb * (w0.x * w12.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t12.x, t12.y), 0).rgb * (w12.x * w12.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t3.x, t12.y), 0).rgb * (w3.x * w12.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t0.x, t3.y), 0).rgb * (w0.x * w3.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t12.x, t3.y), 0).rgb * (w12.x * w3.y);
+    c += tex0.SampleLevel(scaleSampler, float2(t3.x, t3.y), 0).rgb * (w3.x * w3.y);
     return float4(saturate(c), 1);
 }
