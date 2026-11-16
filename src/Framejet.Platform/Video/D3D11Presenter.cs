@@ -583,7 +583,7 @@ namespace Framejet.Platform.Video
             {
                 Width = width, Height = height, Format = BufferFormat, Stereo = false,
                 SampleDescription = new SampleDescription(1, 0), Usage = Usage.RenderTargetOutput,
-                BufferCount = BufferCount, Scaling = Scaling.Stretch, SwapEffect = SwapEffect.FlipDiscard,
+                BufferCount = BufferCount, Scaling = SharpDX.DXGI.Scaling.Stretch, SwapEffect = SwapEffect.FlipDiscard,
                 AlphaMode = AlphaMode.Ignore, Flags = AllowTearingFlag,
             };
             SwapChain1 swapChain;
