@@ -97,16 +97,8 @@ Non-goals
 - **Audio output (owner):** either "Default output", which follows Windows default changes live, or a chosen device. If the chosen device disappears, fall back to the default and say so.
 
 ### 4.5 Audio (owner)
-- NAudio.Wasapi 2.2.1. The chain: shared, event-driven `WasapiCapture(device, true, 10)` → convert WAVEFORMATEXTENSIBLE float to a plain IeeeFloat `WaveFormat` → `BufferedWaveProvider` → a variable-rate resampler (NAudio's `WdlResampler` in 64-tap sinc mode, always in the chain, even when the rates match) → channel map → volume → shared, event-driven `WasapiOut(device, AudioClientShareMode.Shared, true, 10)`.
-- **Low-latency shared mode (Claude's call, from the audio-delay design):** each end on its own uses Windows' `IAudioClient3` at the engine's minimum period (typically 2.67 ms) when its endpoint offers a period below its default, in place of the NAudio stream for that end (`LowLatencyCapture` / `LowLatencyRender`). Mixed mode (one end low-latency, one normal) is normal.
-  - An endpoint that can't, or whose low-latency stream glitches more than twice in 10 s, is remembered for the app run (`LowLatencyRegistry`, never saved). A glitch is a ring underrun, an output wake that finds nothing queued, or a capture discontinuity; only those that count toward the buffer target count here. The session then restarts with that end in normal mode: one log line, no warning.
-- **Drift control (`DriftController`, Claude's call, from the audio-delay design):** the capture card's clock and the output's never match exactly. Instead of letting the buffer grow and then cutting it, the buffer level steers the playback rate by at most ±0.5% (inaudible) toward a target.
-  - **The target is pre-packet headroom:** what is still buffered just before a captured packet lands. The level held at it is the lowest post-packet level over the last second, less that packet (equivalently, the lowest pre-packet level), smoothed over about 250 ms. A packet that lands early lifts one reading but not the minimum.
-  - **The start target** is one output period plus a 3 ms margin: enough for one output read to come before a packet instead of after it, plus the resampler's lookahead (0.67 ms) and the capture packets' timing jitter. On the target card, 10 ms packets land 7–14 ms apart; a 2 ms margin still underran there and 3 ms ran clean. So a 10 ms output holds 13 ms of headroom, and a 2 ms low-latency output 5 ms.
-  - Unlike a post-packet level, headroom can fall below its target, so a slow card is corrected by slowing playback down. The correction is proportional (full ±0.5% at 5 ms off target, still within ±0.5 ms of it), plus an integral term (10 s) that learns a steady clock offset. A virtual mixer's low-latency output was once measured running 0.43% fast against the card.
-  - An underrun while the card is delivering raises the target by 5 ms for the rest of that session, until headroom plus one capture packet reaches 30 ms. Underruns don't raise it while the card has sent nothing for 100 ms (stalled or stopped), or in the first 5 s after playback starts or restarts, when the output can ask for a catch-up read bigger than anything buffered.
-  - **Prefill:** playback plays silence until the buffer holds the target plus one capture period, rather than starting at whatever the first callbacks leave. It does this at start and again when the buffer runs dry while the card sends nothing.
-  - **Hard trim:** only above 80 ms, after a system stall, the buffer is cut back to the target plus one capture period in one step and the trim is logged. It is the only time samples are dropped.
+- NAudio.Wasapi 2.2.1. The chain: shared, event-driven `WasapiCapture(device, true, 10)` → convert WAVEFORMATEXTENSIBLE float to a plain IeeeFloat `WaveFormat` → `BufferedWaveProvider` → volume → shared, event-driven `WasapiOut(device, AudioClientShareMode.Shared, true, 20)`. Resample if the capture and output rates differ; how is the builder's call.
+- **LatencyTrimmer:** hold the buffer near 15 ms. When it passes 60 ms (the card's clock running slightly fast), trim back to the target. Underruns play silence without growing the delay.
 - **Volume** follows a squared curve. **Mute** toggles with M.
 - **Expectation:** sound will trail the picture by an estimated 50–100 ms (the Windows audio engine, audio software in the chain, a wireless headset). That's under the roughly 125 ms where people notice. Not measured; there is no A/V offset control.
 
@@ -163,7 +155,7 @@ Some of these names are the draft's; the Architecture section of `CLAUDE.md` has
   - modes: VideoMode, PixelFormats, ModeCatalog (Build, PickDefault(screen), Resolve(key))
   - DeviceRules (LooksLikeCaptureCard, PickVideo, MatchAudioInput by container, then name)
   - settings: Settings, SettingsStore(path), WindowPlacement
-  - DriftController, VolumeCurve, NoSignalDetector, ToolbarAutoHide
+  - LatencyTrimmer, VolumeCurve, NoSignalDetector, ToolbarAutoHide
   - VideoSession over an IVideoBackend fake (start, busy-retry, lost, return, mode switch)
   - AudioSession over an IAudioBackend fake, posting to the UI through a dispatcher
 - **Platform:** DirectShowCapture, D3D11Presenter, DeviceContainers (cfgmgr32 and MMDevice properties), WasapiAudioBackend with the playthrough chain, AudioDeviceWatcher, DeviceChangeWatcher, KeepAwake.

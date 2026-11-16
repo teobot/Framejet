@@ -37,14 +37,11 @@ namespace Framejet.Platform.Audio
             return samples * 4;
         }
 
-        /// <summary>
-        /// Builds resampler → channel map → volume. The resampler is always present, even when the rates match,
-        /// because its ratio is what holds the playthrough buffer steady.
-        /// </summary>
-        public static ISampleProvider Build(IWaveProvider floatSource, WaveFormat outputMixFormat, out VolumeSampleProvider volume, out VariableRateResampler resampler)
+        public static ISampleProvider Build(IWaveProvider floatSource, WaveFormat outputMixFormat, out VolumeSampleProvider volume)
         {
-            resampler = new VariableRateResampler(floatSource.ToSampleProvider(), outputMixFormat.SampleRate);
-            ISampleProvider p = resampler;
+            ISampleProvider p = floatSource.ToSampleProvider();
+            if (p.WaveFormat.SampleRate != outputMixFormat.SampleRate)
+                p = new WdlResamplingSampleProvider(p, outputMixFormat.SampleRate);
 
             int inCh = p.WaveFormat.Channels, outCh = outputMixFormat.Channels;
             if (inCh != outCh)

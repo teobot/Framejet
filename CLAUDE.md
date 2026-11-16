@@ -43,7 +43,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 
 - **Framejet.Core** uses no Windows media APIs.
   - The state machines `Video/VideoSession` and `Audio/AudioSession` drive abstract `IVideoBackend`/`IAudioBackend`, using an `IScheduler` (UI-thread timers) and an `IDispatcher`.
-  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `DriftController`, `DelayCheck`, `ToolbarAutoHide`, `UpdateCheck`, `AppVersion`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
+  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `LatencyTrimmer`, `DelayCheck`, `ToolbarAutoHide`, `UpdateCheck`, `AppVersion`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
   - Status and warning copy lives in `Ui/UiText`, which the spec quotes verbatim.
   - Tests use fakes, including `FakeScheduler` and the fake backends.
 - **Framejet.Platform** holds the real backends:
@@ -70,10 +70,9 @@ Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queue
 ### Audio path
 
 - The user never picks the input. It is the WASAPI capture endpoint that shares the video device's container ID.
-- Capture is shared-mode and event-driven. Each end uses `IAudioClient3` low-latency mode (`LowLatencyCapture` / `LowLatencyRender`, ~2.67 ms periods) when its own endpoint supports it, else NAudio; `LowLatencyRegistry` remembers for the run which endpoints can't or glitched (>2 in 10 s), and the backend then restarts that end in normal mode quietly.
-- `CaptureIngest` feeds the ring buffer and `DriftController`, which steers the playback rate by up to ±0.5% (proportional plus a slow integral) to hold a target of **pre-packet headroom**: the lowest post-packet level over the last second less the packet. It starts at one output period + 3 ms, rises 5 ms per underrun (not in the first 5 s, nor while the card sends nothing) until headroom + one capture packet reaches 30 ms. Playback is silent until the buffer holds the target plus one capture period (at start, and again after the ring runs dry while the card sends nothing), and it trims only above 80 ms.
-- Framejet's own variable-rate resampler (`WdlResampler` in sinc mode, always present) and channel mapper come next. The default output can be, for example, 8-channel 96 kHz float.
-- `WasapiOut` (10 ms, shared) then plays to the Windows default output, which it follows live, or to a chosen output.
+- Capture is shared-mode and event-driven. It feeds `LatencyTrimmer`, which targets 15 ms and trims above 60 ms.
+- Framejet's own channel mapper and resampler come next. The default output can be, for example, 8-channel 96 kHz float.
+- `WasapiOut` then plays to the Windows default output, which it follows live, or to a chosen output.
 
 ### Resilience (spec §4.7)
 
