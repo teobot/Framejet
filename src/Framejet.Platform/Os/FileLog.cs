@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using Framejet.Core;
 
@@ -11,7 +12,8 @@ namespace Framejet.Platform.Os
     /// <c>Framejet.old.log</c> (replacing any older one), then each entry is one line such as
     /// <c>2026-11-09T19:33:15.123 INFO message</c> or <c>2026-11-09T19:33:15.123 ERROR message: exception</c>.
     /// Usable from any thread. Once the file holds <see cref="MaxBytes"/>, it writes one <c>log full</c> line and
-    /// stops. Logging never throws: if the file can't be opened or written, entries are dropped.
+    /// stops. Logging never throws: if the file can't be opened or written, entries are dropped. The user's profile
+    /// folder is written as <c>%USERPROFILE%</c>, so a pasted log doesn't give away the Windows user name.
     /// </summary>
     public sealed class FileLog : ILog, IDisposable
     {
@@ -109,7 +111,32 @@ namespace Framejet.Platform.Os
         }
 
         static string Line(string level, string text)
-            => DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture) + " " + level + " " + text + "\r\n";
+            => DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture) + " " + level + " "
+               + LogScrub.Scrub(text, ProfilePaths) + "\r\n";
+
+        /// <summary>The user's profile folder, long and 8.3 short form, which <see cref="LogScrub"/> keeps out of the log.</summary>
+        static readonly string[] ProfilePaths = FindProfilePaths();
+
+        static string[] FindProfilePaths()
+        {
+            try
+            {
+                var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (string.IsNullOrEmpty(profile)) return new string[0];
+                var shortPath = new StringBuilder(260);
+                int length = GetShortPathName(profile, shortPath, shortPath.Capacity);
+                return length > 0 && length < shortPath.Capacity
+                    ? new[] { profile, shortPath.ToString() }
+                    : new[] { profile };
+            }
+            catch (Exception)
+            {
+                return new string[0];
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetShortPathName(string longPath, StringBuilder shortPath, int bufferLength);
 
         public void Dispose()
         {
