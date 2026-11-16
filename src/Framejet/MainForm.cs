@@ -348,7 +348,7 @@ namespace Framejet
             if (offer == null) return;
             try
             {
-                Process.Start(new ProcessStartInfo(offer.PageUrl) { UseShellExecute = true });
+                Process.Start(new ProcessStartInfo(offer.PageUrl) { UseShellExecute = true })?.Dispose();
             }
             catch (Exception ex)
             {

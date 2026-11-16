@@ -448,8 +448,13 @@ namespace Framejet
             if (_showUpdate)
             {
                 int pillWidth = TextRenderer.MeasureText(_update.Text, _update.Font).Width + Px(20);
-                _update.SetBounds(right - pillWidth, top, pillWidth, height);
-                right -= pillWidth + gap;
+                if (right - pillWidth - gap < x) _update.Visible = false;
+                else
+                {
+                    _update.Visible = true;
+                    _update.SetBounds(right - pillWidth, top, pillWidth, height);
+                    right -= pillWidth + gap;
+                }
             }
             _status.SetBounds(x, top, Math.Max(0, right - x), height);
         }

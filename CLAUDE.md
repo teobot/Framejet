@@ -17,7 +17,7 @@ dotnet test tests\Framejet.Platform.Tests     # real devices: capture card, webc
 dotnet test tests\Framejet.Core.Tests --filter "FullyQualifiedName~VideoSessionTests"
 ```
 
-- **Platform tests** are `[SkippableFact, Trait("Category", "Hardware")]`. They skip when a device isn't connected, run serially (test parallelization is disabled), and open real devices and windows. They read this PC's devices from `tests\Framejet.Platform.Tests\hardware.local.ini` (git-ignored; start from `hardware.example.ini`). A test whose device isn't set there skips.
+- **Platform tests** are `[SkippableFact, Trait("Category", "Hardware")]`. They skip when a device isn't connected, run serially (test parallelization is disabled), and open real devices and windows. They read this PC's devices from `tests\Framejet.Platform.Tests\hardware.local.ini` (git-ignored; start from `hardware.example.ini`). A test whose device isn't set there skips. `LatestReleaseTests` is `Category=Network`: it calls the live GitHub API and skips when offline.
 - **Self-test** is the end-to-end lag gate. Run `Framejet.exe --selftest report.txt --settings <folder>\settings.ini --seconds 4`.
   - It runs for about 20 s, windowed and then fullscreen. It never saves settings, and it writes its log next to the settings file.
   - Success is exit code 0 and `result: PASS`.

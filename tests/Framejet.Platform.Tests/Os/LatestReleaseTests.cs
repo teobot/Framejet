@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using Framejet.Core.Updates;
 using Framejet.Platform.Os;
@@ -13,6 +14,7 @@ namespace Framejet.Platform.Tests.Os
             string json = null;
             try { json = LatestRelease.Fetch(UpdateCheck.LatestReleaseApi, "Framejet-tests", UpdateCheck.Timeout); }
             catch (WebException ex) { Skip.If(true, "GitHub not reachable: " + ex.Message); }
+            catch (IOException ex) { Skip.If(true, "GitHub not reachable: " + ex.Message); }
             var r = ReleaseInfo.Parse(json);
             Assert.StartsWith(UpdateCheck.ReleasePagePrefix, r.PageUrl);
             Assert.True(AppVersion.TryParse(r.Tag, out _));
