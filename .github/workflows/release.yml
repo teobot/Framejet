@@ -31,8 +31,8 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          # A tag such as v1.2.0 becomes the exe's version; any other tag name leaves it at 1.0.0.
-          $version = '1.0.0'
+          # A tag such as v1.2.0 becomes the exe's version; any other tag name, or Run workflow, leaves it at 0.0.0-dev.
+          $version = '0.0.0-dev'
           if ($env:TAG -match '^v?(\d+(\.\d+){1,3}(-[0-9A-Za-z.-]+)?)$') { $version = $Matches[1] }
           "Version $version"
           dotnet build Framejet.sln -c Release --nologo "-p:Version=$version"
