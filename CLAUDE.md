@@ -43,7 +43,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 
 - **Framejet.Core** uses no Windows media APIs.
   - The state machines `Video/VideoSession` and `Audio/AudioSession` drive abstract `IVideoBackend`/`IAudioBackend`, using an `IScheduler` (UI-thread timers) and an `IDispatcher`.
-  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `LatencyTrimmer`, `DelayCheck`, `ToolbarAutoHide`, `UpdateCheck`, `AppVersion`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
+  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `DriftController`, `DelayCheck`, `ToolbarAutoHide`, `UpdateCheck`, `AppVersion`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
   - Status and warning copy lives in `Ui/UiText`, which the spec quotes verbatim.
   - Tests use fakes, including `FakeScheduler` and the fake backends.
 - **Framejet.Platform** holds the real backends:
@@ -70,9 +70,9 @@ Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queue
 ### Audio path
 
 - The user never picks the input. It is the WASAPI capture endpoint that shares the video device's container ID.
-- Capture is shared-mode and event-driven. It feeds `LatencyTrimmer`, which targets 15 ms and trims above 60 ms.
-- Framejet's own channel mapper and resampler come next. The default output can be, for example, 8-channel 96 kHz float.
-- `WasapiOut` then plays to the Windows default output, which it follows live, or to a chosen output.
+- Capture is shared-mode and event-driven. `CaptureIngest` feeds the ring buffer and `DriftController`, which steers the playback rate by up to ±0.5% to hold the buffer at a target: 10 ms, raised 5 ms per underrun to at most 30 ms. Playback is silent until the buffer first reaches the target, and it trims only above 80 ms.
+- Framejet's own variable-rate resampler (`WdlResampler`, always present) and channel mapper come next. The default output can be, for example, 8-channel 96 kHz float.
+- `WasapiOut` (10 ms, shared) then plays to the Windows default output, which it follows live, or to a chosen output.
 
 ### Resilience (spec §4.7)
 

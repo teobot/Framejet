@@ -21,9 +21,10 @@ namespace Framejet.Platform.Tests.Audio
             using var b = new WasapiAudioBackend(NullLog.Instance); string failed = null; b.Failed += m => failed = m;
             var input = b.ListInputs().FirstOrDefault(i => i.Name == "HDMI (Razer Ripsaw X)") ?? b.ListInputs().FirstOrDefault(i => i.Name == Hardware.Microphone());
             Skip.If(input == null, "no Ripsaw input, and no microphone set in hardware.local.ini"); var output = b.DefaultOutput(); Assert.NotNull(output); Assert.Contains(b.ListOutputs(), o => o.Id == output.Id);
-            b.Start(input, output, 0f); Thread.Sleep(2000); var s = b.GetStats(reset: false); b.Stop(); b.Stop();
+            b.Start(input, output, 0f); Thread.Sleep(5000); var s = b.GetStats(reset: false); b.Stop(); b.Stop();
             Assert.Null(failed); Assert.True(s.BytesCaptured > 0); Assert.True(s.MaxBufferedMs <= 70, $"max {s.MaxBufferedMs} ms");
-            Assert.NotNull(s.Delay); Assert.True(s.Delay.CaptureMs > 0); Assert.True(s.Delay.OutputMs > 0); Assert.Equal("normal", s.Delay.Mode); Assert.True(s.Delay.TotalMeanMs < 200, $"total {s.Delay.TotalMeanMs} ms");
+            Assert.NotNull(s.Delay); Assert.True(s.Delay.CaptureMs > 0); Assert.True(s.Delay.OutputMs > 0); Assert.Equal("normal", s.Delay.Mode); Assert.True(s.Delay.PeriodMs > 0, "live capture client not read");
+            Assert.True(s.Delay.BufferP95Ms <= 25, $"buffer p95 {s.Delay.BufferP95Ms} ms"); Assert.Equal(0, s.Trims); Assert.True(s.Delay.TotalMeanMs < 200, $"total {s.Delay.TotalMeanMs} ms");
         }
 
         [SkippableFact, Trait("Category", "Hardware")] public void Block_tap_reports_1ms_blocks()

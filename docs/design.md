@@ -97,8 +97,11 @@ Non-goals
 - **Audio output (owner):** either "Default output", which follows Windows default changes live, or a chosen device. If the chosen device disappears, fall back to the default and say so.
 
 ### 4.5 Audio (owner)
-- NAudio.Wasapi 2.2.1. The chain: shared, event-driven `WasapiCapture(device, true, 10)` → convert WAVEFORMATEXTENSIBLE float to a plain IeeeFloat `WaveFormat` → `BufferedWaveProvider` → volume → shared, event-driven `WasapiOut(device, AudioClientShareMode.Shared, true, 20)`. Resample if the capture and output rates differ; how is the builder's call.
-- **LatencyTrimmer:** hold the buffer near 15 ms. When it passes 60 ms (the card's clock running slightly fast), trim back to the target. Underruns play silence without growing the delay.
+- NAudio.Wasapi 2.2.1. The chain: shared, event-driven `WasapiCapture(device, true, 10)` → convert WAVEFORMATEXTENSIBLE float to a plain IeeeFloat `WaveFormat` → `BufferedWaveProvider` → a variable-rate resampler (NAudio's `WdlResampler`, always in the chain, even when the rates match) → channel map → volume → shared, event-driven `WasapiOut(device, AudioClientShareMode.Shared, true, 10)`.
+- **Drift control (`DriftController`, Claude's call, from the audio-delay design):** the capture card's clock and the output's never match exactly. Instead of letting the buffer grow and then cutting it, a smoothed buffer level steers the playback rate by at most ±0.5% (inaudible) toward a target.
+  - The target starts at 10 ms. An underrun while the card is delivering raises it by 5 ms, up to 30 ms, for the rest of that session. Underruns while the card has sent nothing for 100 ms (stalled or stopped) don't count.
+  - **Prefill:** playback plays silence until the buffer first reaches the target, rather than starting at whatever the first callbacks leave.
+  - **Hard trim:** only above 80 ms, after a system stall, the buffer is cut back to the target in one step and the trim is logged. It is the only time samples are dropped.
 - **Volume** follows a squared curve. **Mute** toggles with M.
 - **Expectation:** sound will trail the picture by an estimated 50–100 ms (the Windows audio engine, audio software in the chain, a wireless headset). That's under the roughly 125 ms where people notice. Not measured; there is no A/V offset control.
 
@@ -155,7 +158,7 @@ Some of these names are the draft's; the Architecture section of `CLAUDE.md` has
   - modes: VideoMode, PixelFormats, ModeCatalog (Build, PickDefault(screen), Resolve(key))
   - DeviceRules (LooksLikeCaptureCard, PickVideo, MatchAudioInput by container, then name)
   - settings: Settings, SettingsStore(path), WindowPlacement
-  - LatencyTrimmer, VolumeCurve, NoSignalDetector, ToolbarAutoHide
+  - DriftController, VolumeCurve, NoSignalDetector, ToolbarAutoHide
   - VideoSession over an IVideoBackend fake (start, busy-retry, lost, return, mode switch)
   - AudioSession over an IAudioBackend fake, posting to the UI through a dispatcher
 - **Platform:** DirectShowCapture, D3D11Presenter, DeviceContainers (cfgmgr32 and MMDevice properties), WasapiAudioBackend with the playthrough chain, AudioDeviceWatcher, DeviceChangeWatcher, KeepAwake.

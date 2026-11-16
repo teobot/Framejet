@@ -1,17 +1,28 @@
 using System;
 using System.Diagnostics;
+using System.Threading;
 using NAudio.Wave;
+using Framejet.Core;
 using Framejet.Core.Audio;
 using Framejet.Core.Video;
 
 namespace Framejet.Platform.Audio
 {
-    /// <summary>Takes captured buffers, converts them to float, feeds the playback buffer and trims latency.</summary>
+    /// <summary>
+    /// Takes captured buffers, converts them to float and feeds the playback buffer. A <see cref="DriftController"/>
+    /// steers the playback rate to hold the buffer at its target; samples are dropped only after a stall.
+    /// Playback reads silence until the buffer first reaches the target (prefill).
+    /// </summary>
     internal sealed class CaptureIngest
     {
+        // An underrun raises the target only if capture delivered this recently; a stalled card must not ratchet it.
+        static readonly long DeliveringTicks = Stopwatch.Frequency / 10;
+
         readonly BufferedWaveProvider _buffer;
         readonly WaveFormat _captureFormat;
-        readonly LatencyTrimmer _trimmer;
+        readonly DriftController _drift;
+        readonly ILog _log;
+        readonly UnderrunCountingProvider _output;
         readonly object _statsLock = new object();
         readonly byte[] _drain = new byte[16384];
         byte[] _floatScratch = new byte[0]; // touched only on the capture thread
@@ -22,12 +33,25 @@ namespace Framejet.Platform.Audio
 
         long _bytes; float _peak; double _buffered, _maxBuffered; int _trimsBase;
         volatile Action<long, float> _blockPeakTap;
+        volatile VariableRateResampler _resampler;
+        volatile bool _primed;
+        long _lastPacket;        // Stopwatch time of the newest packet; written on the capture thread, read on the output thread
+        int _pendingUnderruns;   // underruns while capture delivered, not yet passed to the controller
         long _lastBlockStamp = long.MinValue; // touched only on the capture thread
 
-        public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, LatencyTrimmer trimmer)
+        public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, DriftController drift, ILog log)
         {
-            _buffer = buffer; _captureFormat = captureFormat; _trimmer = trimmer;
+            _buffer = buffer; _captureFormat = captureFormat; _drift = drift; _log = log ?? NullLog.Instance;
+            _output = new UnderrunCountingProvider(buffer, () => _primed, OnUnderrun);
         }
+
+        /// <summary>What playback reads: the ring, behind the prefill gate and the underrun count.</summary>
+        public IWaveProvider Output => _output;
+
+        public int Underruns => _output.Underruns;
+
+        /// <summary>Receives the controller's ratio after each packet, from the capture thread.</summary>
+        public VariableRateResampler Resampler { set => _resampler = value; }
 
         /// <summary>
         /// While set, called on the capture thread for each 1 ms block of every packet, with the block's peak and the
@@ -39,6 +63,8 @@ namespace Framejet.Platform.Audio
         {
             long arrived = Stopwatch.GetTimestamp();
             if (count == 0) return;
+            long previous = Interlocked.Exchange(ref _lastPacket, arrived);
+            double elapsedMs = previous == 0 ? 0 : Math.Max(0, (arrived - previous) * 1000.0 / Stopwatch.Frequency);
             int needed = _captureFormat.Encoding == WaveFormatEncoding.IeeeFloat || _captureFormat.BitsPerSample >= 32
                 ? count : count * 4 / (_captureFormat.BitsPerSample / 8);
             if (_floatScratch.Length < needed) _floatScratch = new byte[needed];
@@ -52,13 +78,17 @@ namespace Framejet.Platform.Audio
             }
 
             var bf = _buffer.WaveFormat;
-            var tap = _blockPeakTap;
-            if (tap != null) TapBlocks(tap, n, bf, arrived);
-
             _buffer.AddSamples(_floatScratch, 0, n);
             double preTrimMs = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
 
-            int drop = _trimmer.BytesToDrop(_buffer.BufferedBytes, bf.AverageBytesPerSecond, bf.BlockAlign);
+            if (Interlocked.Exchange(ref _pendingUnderruns, 0) > 0)
+            {
+                _drift.Underrun();
+                _log.Info("Audio underrun; buffer target now " + _drift.Target.TotalMilliseconds + " ms");
+            }
+
+            int drop = _drift.BytesToTrim(_buffer.BufferedBytes, bf.AverageBytesPerSecond, bf.BlockAlign);
+            bool trimmed = drop > 0;
             while (drop > 0)
             {
                 int read = _buffer.Read(_drain, 0, Math.Min(drop, _drain.Length));
@@ -67,6 +97,18 @@ namespace Framejet.Platform.Audio
             }
 
             double ms = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
+            if (trimmed) _log.Info(FormattableString.Invariant($"Audio buffer trimmed from {preTrimMs:0.0} ms to {ms:0.0} ms after a stall"));
+
+            if (!_primed && ms >= _drift.Target.TotalMilliseconds) _primed = true;
+            if (_primed)
+            {
+                double ratio = _drift.Update(ms, elapsedMs);
+                var resampler = _resampler;
+                if (resampler != null) resampler.Ratio = ratio;
+            }
+
+            var tap = _blockPeakTap;
+            if (tap != null) TapBlocks(tap, n, bf, arrived);
             lock (_statsLock)
             {
                 _bytes += count;
@@ -77,6 +119,13 @@ namespace Framejet.Platform.Audio
                 if (_levelCount < _levels.Length) _levelCount++;
                 if (preTrimMs > _maxBuffered) _maxBuffered = preTrimMs;
             }
+        }
+
+        // On the output thread.
+        void OnUnderrun()
+        {
+            if (Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastPacket) <= DeliveringTicks)
+                Interlocked.Increment(ref _pendingUnderruns);
         }
 
         /// <summary>
@@ -113,9 +162,9 @@ namespace Framejet.Platform.Audio
             lock (_statsLock)
             {
                 var level = TimingStats.From(new ArraySegment<double>(_levels, 0, _levelCount));
-                var s = new AudioStats { BytesCaptured = _bytes, Peak = _peak, BufferedMs = _buffered, MaxBufferedMs = _maxBuffered, Trims = _trimmer.Trims - _trimsBase,
+                var s = new AudioStats { BytesCaptured = _bytes, Peak = _peak, BufferedMs = _buffered, MaxBufferedMs = _maxBuffered, Trims = _drift.Trims - _trimsBase,
                     Delay = new AudioDelay { BufferMeanMs = level.MeanMs, BufferP95Ms = level.P95Ms } };
-                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _trimmer.Trims; _levelCount = 0; _levelNext = 0; }
+                if (reset) { _bytes = 0; _peak = 0; _maxBuffered = _buffered; _trimsBase = _drift.Trims; _levelCount = 0; _levelNext = 0; }
                 return s;
             }
         }

@@ -157,13 +157,12 @@ namespace Framejet.Platform.Audio
             BufferedWaveProvider _buffer;
             WaveFormat _captureFormat;
             CaptureIngest _ingest;
-            UnderrunCountingProvider _underruns;
             OutputPaddingSampler _padding;
             double _captureMs, _periodMs, _outStreamMs;
             int _underrunBase;
             volatile bool _disposed;
 
-            const int CaptureBufferMs = 10, OutputLatencyMs = 20;
+            const int CaptureBufferMs = 10, OutputLatencyMs = 10;
             string _captureSource = "fallback", _outputSource = "fallback";
 
             public VolumeSampleProvider Volume { get; private set; }
@@ -184,7 +183,7 @@ namespace Framejet.Platform.Audio
                     DiscardOnBufferOverflow = true,
                     ReadFully = true
                 };
-                _ingest = new CaptureIngest(_buffer, _captureFormat, new LatencyTrimmer(LatencyTrimmer.DefaultTarget, LatencyTrimmer.DefaultTrimAbove))
+                _ingest = new CaptureIngest(_buffer, _captureFormat, new DriftController(), _owner._log)
                     { BlockPeakTap = _owner._blockPeakTap };
                 _capture.DataAvailable += (s, e) => { if (ReferenceEquals(s, _capture)) { if (!_disposed) _ingest.Process(e.Buffer, e.BytesRecorded); } };
                 _capture.RecordingStopped += (s, e) => { if (e.Exception != null && ReferenceEquals(s, _capture)) _owner.RaiseFailed(this, e.Exception.Message); };
@@ -195,8 +194,8 @@ namespace Framejet.Platform.Audio
                 VolumeSampleProvider volume;
                 WaveFormat mix;
                 using (var client = _outDevice.AudioClient) mix = client.MixFormat; // each AudioClient access activates a new client
-                _underruns = new UnderrunCountingProvider(_buffer);
-                var chain = PlaythroughChain.Build(_underruns, mix, out volume);
+                var chain = PlaythroughChain.Build(_ingest.Output, mix, out volume, out var resampler);
+                _ingest.Resampler = resampler;
                 Volume = volume;
                 volume.Volume = gain;
                 _padding = new OutputPaddingSampler(PlaythroughChain.ToWaveProvider(chain, mix), mix.SampleRate);
@@ -222,7 +221,7 @@ namespace Framejet.Platform.Audio
                 d.OutputMs = _outStreamMs + _padding.MeanPaddingMs(reset);
                 d.Mode = "normal";
                 d.PeriodMs = _periodMs;
-                int u = _underruns.Underruns;
+                int u = _ingest.Underruns;
                 d.Underruns = u - _underrunBase;
                 if (reset) _underrunBase = u;
                 return s;
