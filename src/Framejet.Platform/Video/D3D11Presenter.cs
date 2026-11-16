@@ -92,6 +92,7 @@ namespace Framejet.Platform.Video
 
         // Set from the UI thread, read by the render thread.
         volatile bool _vsync = true, _paused, _measureLatency, _tearingSupported;
+        volatile ScalingMode _scaling = ScalingMode.Fill;
         int _simulateDeviceLost;
         long _firstPresent; // written by the render thread once per start, read from any thread
 
@@ -119,6 +120,9 @@ namespace Framejet.Platform.Video
 
         /// <summary>On (the default): Present(1) waits for the next refresh. Off: Present(0), tearing when supported.</summary>
         public bool VSync { get => _vsync; set => _vsync = value; }
+
+        /// <summary>How the picture is sized in the window. Read once per draw.</summary>
+        public ScalingMode Scaling { get => _scaling; set => _scaling = value; }
 
         /// <summary>While paused, arriving frames are counted as dropped and not drawn.</summary>
         public bool Paused { get => _paused; set => _paused = value; }
@@ -342,7 +346,7 @@ namespace Framejet.Platform.Video
 
             _frameInFlight = true;
             _renderer.Upload(_frame);
-            _renderer.Draw(_backBufferView, _bufferWidth, _bufferHeight);
+            _renderer.Draw(_backBufferView, _bufferWidth, _bufferHeight, _scaling);
             bool vsync = _vsync, tearing = !vsync && _tearingSupported;
             if (Interlocked.Exchange(ref _simulateDeviceLost, 0) != 0)
                 throw new SharpDXException(new Result(DeviceRemoved), "Simulated device loss");

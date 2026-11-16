@@ -7,9 +7,9 @@ namespace Framejet.Platform.Tests.Video
 {
     public class FrameRendererTests
     {
-        static byte[] Render(CaptureFormat f, byte[] frame, int tw, int th)
+        static byte[] Render(CaptureFormat f, byte[] frame, int tw, int th, ScalingMode scaling = ScalingMode.Fill)
         { using var d = new SharpDX.Direct3D11.Device(SharpDX.Direct3D.DriverType.Hardware, SharpDX.Direct3D11.DeviceCreationFlags.BgraSupport);
-          using var r = new FrameRenderer(d); r.Configure(f); return r.RenderToBgra(frame, tw, th); }
+          using var r = new FrameRenderer(d); r.Configure(f); return r.RenderToBgra(frame, tw, th, scaling); }
         static void AssertPixel(byte[] bgra, int width, int x, int y, int b, int g, int r)
         { int i = (y * width + x) * 4; Assert.InRange(bgra[i], b - 3, b + 3); Assert.InRange(bgra[i + 1], g - 3, g + 3); Assert.InRange(bgra[i + 2], r - 3, r + 3); }
 
@@ -26,5 +26,22 @@ namespace Framejet.Platform.Tests.Video
         [SkippableFact, Trait("Category", "Hardware")] public void Letterboxes_4_3_into_16_9()
         { var f = new CaptureFormat(640, 480, GrabberFormat.Nv12, false); var px = Render(f, SyntheticFrames.Solid(f, 235, 128, 128), 1280, 720);
           AssertPixel(px, 1280, 100, 360, 0, 0, 0); AssertPixel(px, 1280, 640, 360, 255, 255, 255); }
+
+        [SkippableFact, Trait("Category", "Hardware")] public void One_to_one_crops_the_centre_when_too_big()
+        { var f = new CaptureFormat(640, 480, GrabberFormat.Yuy2, false); // left half white, right half black
+          var px = Render(f, SyntheticFrames.SplitLeftRight(f, 235, 16), 320, 480, ScalingMode.OneToOne); // shows source x 160..479
+          AssertPixel(px, 320, 100, 240, 255, 255, 255); AssertPixel(px, 320, 220, 240, 0, 0, 0); }
+        [SkippableFact, Trait("Category", "Hardware")] public void Crisp_doubles_without_blending_the_edge()
+        { var f = new CaptureFormat(640, 480, GrabberFormat.Yuy2, false);
+          var px = Render(f, SyntheticFrames.SplitLeftRight(f, 235, 16), 1280, 960, ScalingMode.WholeStepsCrisp);
+          AssertPixel(px, 1280, 639, 480, 255, 255, 255); AssertPixel(px, 1280, 640, 480, 0, 0, 0); }
+        [SkippableFact, Trait("Category", "Hardware")] public void Smooth_doubles_with_a_blended_edge()
+        { var f = new CaptureFormat(640, 480, GrabberFormat.Yuy2, false);
+          var px = Render(f, SyntheticFrames.SplitLeftRight(f, 235, 16), 1280, 960, ScalingMode.WholeStepsSmooth);
+          int i = (480 * 1280 + 640) * 4; Assert.InRange(px[i], 20, 235); } // Catmull-Rom puts ~20% of the white side here
+        [SkippableFact, Trait("Category", "Hardware")] public void Whole_steps_leaves_black_bars()
+        { var f = new CaptureFormat(640, 480, GrabberFormat.Yuy2, false);
+          var px = Render(f, SyntheticFrames.Solid(f, 235, 128, 128), 1000, 600, ScalingMode.WholeStepsCrisp); // 1x at (180, 60)
+          AssertPixel(px, 1000, 100, 300, 0, 0, 0); AssertPixel(px, 1000, 500, 300, 255, 255, 255); }
     }
 }

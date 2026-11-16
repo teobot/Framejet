@@ -15,8 +15,8 @@ using D3DMapFlags = SharpDX.Direct3D11.MapFlags;
 namespace Framejet.Platform.Video
 {
     /// <summary>
-    /// Converts a captured frame to RGB at source size, then scales it letterboxed into a render target:
-    /// Catmull-Rom when upscaling, bilinear at 1:1 or when downscaling. Use it from one thread at a time.
+    /// Converts a captured frame to RGB at source size, then scales it into a render target as the Scaling choice places it:
+    /// Catmull-Rom, bilinear or point, by <see cref="Framejet.Core.Video.Scaling.Filter"/>. Use it from one thread at a time.
     /// </summary>
     public sealed class FrameRenderer : IDisposable
     {
@@ -28,7 +28,7 @@ namespace Framejet.Platform.Video
         readonly DeviceContext _context;
         readonly VertexShader _vs;
         readonly PixelShader _nv12, _yuy2, _uyvy, _rgb32, _catmullRom, _bilinear;
-        readonly SamplerState _linearClamp;
+        readonly SamplerState _linearClamp, _pointClamp;
 
         CaptureFormat _format;
         PixelShader _convert;
@@ -62,6 +62,12 @@ namespace Framejet.Platform.Video
                 _linearClamp = new SamplerState(device, new SamplerStateDescription
                 {
                     Filter = Filter.MinMagMipLinear,
+                    AddressU = TextureAddressMode.Clamp, AddressV = TextureAddressMode.Clamp, AddressW = TextureAddressMode.Clamp,
+                    ComparisonFunction = Comparison.Never, MaximumLod = float.MaxValue,
+                });
+                _pointClamp = new SamplerState(device, new SamplerStateDescription
+                {
+                    Filter = Filter.MinMagMipPoint,
                     AddressU = TextureAddressMode.Clamp, AddressV = TextureAddressMode.Clamp, AddressW = TextureAddressMode.Clamp,
                     ComparisonFunction = Comparison.Never, MaximumLod = float.MaxValue,
                 });
@@ -147,8 +153,8 @@ namespace Framejet.Platform.Video
             }
         }
 
-        /// <summary>Draws the uploaded frame letterboxed into a target, with black bars.</summary>
-        public void Draw(RenderTargetView target, int targetWidth, int targetHeight)
+        /// <summary>Draws the uploaded frame into a target as <see cref="ScalingMode"/> places it, with black outside it.</summary>
+        public void Draw(RenderTargetView target, int targetWidth, int targetHeight, ScalingMode scaling)
         {
             var format = ConfiguredFormat();
             if (target == null) throw new ArgumentNullException(nameof(target));
@@ -171,9 +177,11 @@ namespace Framejet.Platform.Video
             // 2. Clear the target black, 3. fit the picture's aspect ratio, 4. scale into that box.
             _context.OutputMerger.SetRenderTargets(target);
             _context.ClearRenderTargetView(target, Black);
-            var box = Letterbox.Fit(w, h, targetWidth, targetHeight);
+            var box = Framejet.Core.Video.Scaling.Place(w, h, targetWidth, targetHeight, scaling);
+            var filter = Framejet.Core.Video.Scaling.Filter(scaling, box, w, h);
             _context.Rasterizer.SetViewport(box.X, box.Y, box.Width, box.Height, 0, 1);
-            _context.PixelShader.Set(box.Width > w || box.Height > h ? _catmullRom : _bilinear);
+            _context.PixelShader.Set(filter == ScaleFilter.CatmullRom ? _catmullRom : _bilinear);
+            _context.PixelShader.SetSampler(0, filter == ScaleFilter.Point ? _pointClamp : _linearClamp);
             _context.PixelShader.SetShaderResource(0, _pictureView);
             _context.PixelShader.SetShaderResource(1, null);
             _context.Draw(3, 0);
@@ -183,7 +191,7 @@ namespace Framejet.Platform.Video
         }
 
         /// <summary>Uploads and draws a frame into an offscreen target and returns its pixels as tightly packed BGRA.</summary>
-        internal byte[] RenderToBgra(byte[] frame, int targetWidth, int targetHeight)
+        internal byte[] RenderToBgra(byte[] frame, int targetWidth, int targetHeight, ScalingMode scaling = ScalingMode.Fill)
         {
             if (targetWidth <= 0 || targetHeight <= 0) throw new ArgumentOutOfRangeException(nameof(targetWidth), "The target needs a positive size");
             var description = new Texture2DDescription
@@ -201,7 +209,7 @@ namespace Framejet.Platform.Video
                 using (var staging = new Texture2D(_device, description))
                 {
                     Upload(frame);
-                    Draw(targetView, targetWidth, targetHeight);
+                    Draw(targetView, targetWidth, targetHeight, scaling);
                     _context.OutputMerger.SetRenderTargets((RenderTargetView)null);
                     _context.CopyResource(target, staging);
                     var mapped = _context.MapSubresource(staging, 0, MapMode.Read, D3DMapFlags.None);
@@ -226,6 +234,7 @@ namespace Framejet.Platform.Video
             if (_disposed) return;
             _disposed = true;
             ReleaseFormatResources();
+            _pointClamp?.Dispose();
             _linearClamp?.Dispose();
             _bilinear?.Dispose();
             _catmullRom?.Dispose();
