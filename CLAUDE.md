@@ -58,7 +58,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 1. The capture filter feeds a Smart Tee, then a Sample Grabber, then a Null Renderer. The graph has no reference clock (`SetSyncSource(null)`), so nothing waits on timestamps.
 2. `BufferCB` copies each frame into `LatestFrameSlot` and sets the slot's auto-reset event.
 3. The presenter runs its own AboveNormal render thread, which takes the newest frame only on a signalled wake. Taking on unsignalled wakes contends with `BufferCB`'s copy under the slot lock.
-4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling.
+4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling. The player's Scaling choice (Fill, Whole steps, 1:1) picks the rectangle; crisp uses point sampling.
 5. Frames go out on a FLIP_DISCARD swap chain with 2 buffers, maximum frame latency 1, tearing allowed and a frame-latency waitable object. Before each present the render thread takes one slot from the object, waiting 4 ms by default (1 s with Never skip frames or V-Sync Off). V-Sync On is then `Present(1)`; V-Sync Off is `Present(0, ALLOW_TEARING)`.
    - A timed-out wait skips the frame in every mode, and a failed Present keeps its slot. Never present without a slot: the object is an uncapped semaphore, so a surplus lifts the latency limit for good.
    - 1 s with no slot while frames keep arriving recreates the device and swap chain; the new swap chain resets the object.
@@ -75,6 +75,10 @@ At 60 Hz a frame that misses the display's ~4 ms latch shows a refresh later, an
 - Capture is shared-mode and event-driven. It feeds `LatencyTrimmer`, which targets 15 ms and trims above 60 ms.
 - Framejet's own channel mapper and resampler come next. The default output can be, for example, 8-channel 96 kHz float.
 - `WasapiOut` then plays to the Windows default output, which it follows live, or to a chosen output.
+- Framejet's own audio delay is measured at 22–32 ms (`docs/design.md` §4.5):
+  - The self-test prints it as `audio delay:`.
+  - The live client latencies are read from NAudio's private `audioClient` fields by reflection, and the log names their source.
+  - The right-click **Check A/V sync…** (`SyncCheck`, `SyncAnalyzer`, `SyncTaps`) measures the full gap using a PS5 sync video.
 
 ### Resilience (spec §4.7)
 

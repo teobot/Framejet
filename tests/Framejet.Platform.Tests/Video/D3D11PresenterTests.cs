@@ -16,7 +16,7 @@ namespace Framejet.Platform.Tests.Video
         static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat> body) => WithPresenter((p, slot, f, _) => body(p, slot, f));
         static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat, Form> body) => Sta.Run(() =>
         {
-            using var form = new Form { Width = 1280, Height = 720, StartPosition = FormStartPosition.CenterScreen }; form.Show();
+            using var form = OnPrimaryScreen.Centre(new Form { Width = 1280, Height = 720 }); form.Show();
             var f = new CaptureFormat(1280, 720, GrabberFormat.Nv12, false); var slot = new LatestFrameSlot(f.FrameBytes);
             using var p = new D3D11Presenter(form.Handle, NullLog.Instance); p.Start(f, slot); body(p, slot, f, form); p.Stop();
         });
@@ -105,7 +105,7 @@ namespace Framejet.Platform.Tests.Video
         [SkippableFact, Trait("Category", "Hardware")] public void A_render_thread_that_outlives_dispose_still_frees_the_window()
             => Sta.Run(() =>
             {
-                using var form = new Form { Width = 1280, Height = 720, StartPosition = FormStartPosition.CenterScreen }; form.Show();
+                using var form = OnPrimaryScreen.Centre(new Form { Width = 1280, Height = 720 }); form.Show();
                 var f = new CaptureFormat(1280, 720, GrabberFormat.Nv12, false);
                 using var blocked = new ManualResetEventSlim(); using var unblock = new ManualResetEventSlim();
                 var slot = new LatestFrameSlot(f.FrameBytes);

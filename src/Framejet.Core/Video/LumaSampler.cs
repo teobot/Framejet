@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace Framejet.Core.Video
 {
@@ -24,14 +25,7 @@ namespace Framejet.Core.Video
             double sum = 0, sumSq = 0; int n = 0, dark = 0;
             for (int p = 0; p < pixels; p += Step)
             {
-                int index;
-                switch (format.Format)
-                {
-                    case GrabberFormat.Yuy2: index = 2 * p; break;
-                    case GrabberFormat.Uyvy: index = 2 * p + 1; break;
-                    case GrabberFormat.Rgb32: index = 4 * p + 1; break;
-                    default: index = p; break;
-                }
+                int index = LumaIndex(p, format.Format);
                 if (index >= frame.Length) break;
                 double v = frame[index];
                 if (frame[index] <= DarkLumaMax) dark++;
@@ -41,6 +35,36 @@ namespace Framejet.Core.Video
             double mean = sum / n;
             double variance = Math.Max(0, sumSq / n - mean * mean);
             return new LumaStats(mean, Math.Sqrt(variance), (double)dark / n);
+        }
+
+        /// <summary>
+        /// The mean of the same samples as <see cref="Sample"/>, read straight from a frame buffer of
+        /// <paramref name="length"/> bytes; 0 when it holds none.
+        /// </summary>
+        public static double Mean(IntPtr frame, int length, CaptureFormat format)
+        {
+            int pixels = format.Width * format.Height;
+            long sum = 0; int n = 0;
+            for (int p = 0; p < pixels; p += Step)
+            {
+                int index = LumaIndex(p, format.Format);
+                if (index >= length) break;
+                sum += Marshal.ReadByte(frame, index);
+                n++;
+            }
+            return n == 0 ? 0 : (double)sum / n;
+        }
+
+        /// <summary>The byte that holds pixel <paramref name="pixel"/>'s luma (green for RGB32).</summary>
+        static int LumaIndex(int pixel, GrabberFormat format)
+        {
+            switch (format)
+            {
+                case GrabberFormat.Yuy2: return 2 * pixel;
+                case GrabberFormat.Uyvy: return 2 * pixel + 1;
+                case GrabberFormat.Rgb32: return 4 * pixel + 1;
+                default: return pixel;
+            }
         }
     }
 }

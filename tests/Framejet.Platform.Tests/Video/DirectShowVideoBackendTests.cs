@@ -53,6 +53,22 @@ namespace Framejet.Platform.Tests.Video
                 Assert.Equal(1, aTaken); Assert.Equal(0, aLost); Assert.True(b.GetStats().Drawn > 0, $"drawn {b.GetStats().Drawn}"); a.Stop(); b.Stop(); b.Stop(); });
         }
 
+        [SkippableFact, Trait("Category", "Hardware")] public void Luma_tap_sees_every_frame()
+        {
+            var webcam = Hardware.Webcam();
+            Sta.Run(() => { using var host = new TestVideoHost(640, 360, false); using var b = new DirectShowVideoBackend(host, NullLog.Instance);
+                var stamps = new System.Collections.Generic.List<long>(); var gate = new object();
+                b.Start(webcam, Mode(webcam, "640x480@30/YUY2"));
+                long before = b.FramesArrived;
+                b.ArrivalLumaTap = (ticks, luma) => { lock (gate) stamps.Add(ticks); };
+                Sta.Pump(TimeSpan.FromSeconds(2));
+                b.ArrivalLumaTap = null; long arrived = b.FramesArrived - before; b.Stop();
+                long[] seen; lock (gate) seen = stamps.ToArray();
+                Assert.True(seen.Length >= 20, $"tap saw {seen.Length} frames");
+                Assert.True(Math.Abs(seen.Length - arrived) <= 2, $"tap saw {seen.Length}, arrived {arrived}");
+                for (int i = 1; i < seen.Length; i++) Assert.True(seen[i] > seen[i - 1], $"stamp {i} not after the one before"); });
+        }
+
         // A device can't be unplugged on demand, so these queue the graph events a capture filter raises.
         [SkippableFact, Trait("Category", "Hardware")] public void Graph_errors_raise_device_lost_once()
         {

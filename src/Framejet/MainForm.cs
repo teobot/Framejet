@@ -56,6 +56,7 @@ namespace Framejet
         readonly ScreenInfo _startFullscreenOn;
         ControlDispatcher _dispatcher;
         AudioDeviceWatcher _watcher;
+        SyncCheck _syncCheck; // while the A/V sync dialog is open
         string _runningKey;
         Rectangle _normalBounds;
         FormWindowState _normalState;
@@ -93,7 +94,7 @@ namespace Framejet
             NoSignal = new NoSignalDetector();
             _autoHide = new ToolbarAutoHide(Clock.Now);
 
-            Text = "Framejet";
+            Text = UiText.NameAndVersion(Application.ProductVersion); // shows which copy this is
             Icon = new Icon(typeof(MainForm).Assembly.GetManifestResourceStream("Framejet.ico"));
             BackColor = DarkTheme.Window;
             StartPosition = FormStartPosition.Manual;
@@ -147,13 +148,13 @@ namespace Framejet
         public ContextMenuStrip VideoContextMenu => _menu;
 
         /// <summary>How the picture is drawn in the video area: "1:1" pixel for pixel, or a percentage. Null with no mode or no area.</summary>
-        public string PictureScale => Video?.Mode == null ? null : StatusText.Scale(Video.Mode.Width, Video.Mode.Height, _surface.VideoSize);
+        public string PictureScale => Video?.Mode == null ? null : StatusText.Scale(Video.Mode.Width, Video.Mode.Height, _surface.VideoSize, Settings.Scaling);
 
         /// <summary>
         /// The status without warnings, such as "1440p · 59.9 fps · 1:1", while video runs; otherwise null. The right-click
         /// menu shows it, so it can be read in fullscreen, where the toolbar never shows.
         /// </summary>
-        public string PictureStatus => Video?.State == VideoState.Running ? StatusText.Format(Video.Mode, VideoBackend?.MeasuredFps ?? 0, _surface.VideoSize, null) : null;
+        public string PictureStatus => Video?.State == VideoState.Running ? StatusText.Format(Video.Mode, VideoBackend?.MeasuredFps ?? 0, _surface.VideoSize, null, Settings.Scaling) : null;
 
         public IReadOnlyList<ScreenInfo> Screens()
             => Screen.AllScreens.Select(s => new ScreenInfo(s.DeviceName, s.Bounds, s.WorkingArea, s.Primary)).ToList();
@@ -210,6 +211,16 @@ namespace Framejet
             SaveSettings();
         }
 
+        /// <summary>The Scaling choice: in the settings and the running presenter.</summary>
+        public void SetScaling(ScalingMode mode)
+        {
+            if (_closed) return;
+            Settings.Scaling = mode;
+            if (VideoBackend != null) VideoBackend.Scaling = mode;
+            SaveSettings();
+            _toolbar?.RefreshContent(false);
+        }
+
         /// <summary>User-initiated rescan: also takes the card back after another app took it.</summary>
         public void RescanDevices()
         {
@@ -217,6 +228,26 @@ namespace Framejet
             Video.Rescan();
             _audioDevicesDirty = true;
             Audio.DevicesChanged();
+        }
+
+        /// <summary>The A/V sync check needs both the picture and the sound running.</summary>
+        public bool CanCheckSync => !_closed && Video?.State == VideoState.Running && AudioBackend?.IsRunning == true;
+
+        /// <summary>The Check A/V sync menu item: a modal dialog that runs the check and shows its result.</summary>
+        public void CheckAvSync()
+        {
+            if (!CanCheckSync || _syncCheck != null) return;
+            var check = new SyncCheck(new SyncTaps(VideoBackend, AudioBackend), Clock, Stopwatch.Frequency);
+            check.Finished += (headline, split) => Log.Info("A/V sync check: " + headline + (split == null ? "" : " (" + split + ")"));
+            _syncCheck = check;
+            try
+            {
+                using (var dialog = new SyncCheckDialog(check, () => CanCheckSync, Log)) dialog.ShowDialog(this);
+            }
+            finally
+            {
+                _syncCheck = null;
+            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -301,7 +332,7 @@ namespace Framejet
         void StartDevices()
         {
             _dispatcher = new ControlDispatcher(this);
-            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, NeverSkipFrames = Settings.NeverSkipFrames, Paused = WindowState == FormWindowState.Minimized };
+            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, NeverSkipFrames = Settings.NeverSkipFrames, Scaling = Settings.Scaling, Paused = WindowState == FormWindowState.Minimized };
             AudioBackend = new WasapiAudioBackend(Log);
             try
             {
@@ -412,6 +443,7 @@ namespace Framejet
         void OnAudioChanged()
         {
             if (_closed) return;
+            if (AudioBackend?.IsRunning != true) _syncCheck?.SourceStopped();
             var devices = _audioDevicesDirty;
             _audioDevicesDirty = false;
             _toolbar?.RefreshContent(devices); // a volume or mute change does not list the outputs again
@@ -430,6 +462,8 @@ namespace Framejet
             var key = running ? Video.Device.Path + "|" + Video.Mode?.Key : null;
             if (key != null && key != _runningKey) NoSignal.Reset();
             _runningKey = key;
+
+            if (!running) _syncCheck?.SourceStopped();
 
             var audioTimer = Stopwatch.StartNew();
             Audio.Follow(running ? Video.Device : null, running ? DeviceContainers.ForDirectShowDevicePath(Video.Device.Path) : Guid.Empty);
@@ -490,7 +524,7 @@ namespace Framejet
             _warnings.Clear();
             _warnings.AddRange(warnings);
             var fps = VideoBackend != null ? VideoBackend.MeasuredFps : 0; // not GetStats: it allocates ~150 KB, and the GCs pause the render thread
-            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, _surface.VideoSize, warnings));
+            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, _surface.VideoSize, warnings, Settings.Scaling));
         }
 
         /// <summary>

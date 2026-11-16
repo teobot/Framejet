@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using Framejet.Core.Tests.Fakes;
 using Framejet.Core.Timing;
 using Framejet.Core.Ui;
@@ -11,6 +12,25 @@ namespace Framejet.Core.Tests.Ui
     public class UiLogicTests
     {
         static TimeSpan S(double s) => TimeSpan.FromSeconds(s);
+
+        [Theory] // fw, fh, area w, area h, mode, expected
+        [InlineData(2560, 1440, 2560, 1360, ScalingMode.OneToOne,        "1:1")]   // cropped is still 1:1
+        [InlineData(2560, 1440, 2560, 1360, ScalingMode.WholeStepsCrisp, "94%")]   // fell back to Fill (2418 px wide)
+        [InlineData(1920, 1080, 2560, 1440, ScalingMode.WholeStepsCrisp, "1:1")]
+        [InlineData(1920, 1080, 2560, 1440, ScalingMode.Fill,            "133%")]
+        [InlineData(1280,  720, 2560, 1440, ScalingMode.WholeStepsSmooth,"200%")]
+        public void Scale_follows_the_scaling_mode(int fw, int fh, int aw, int ah, ScalingMode mode, string expected)
+            => Assert.Equal(expected, StatusText.Scale(fw, fh, new Size(aw, ah), mode));
+
+        public static System.Collections.Generic.IEnumerable<object[]> AllModes => Scaling.All.Select(m => new object[] { m });
+
+        [Theory, MemberData(nameof(AllModes))]
+        public void Scale_is_null_with_no_area(ScalingMode mode)
+            => Assert.Null(StatusText.Scale(1920, 1080, Size.Empty, mode));
+
+        [Fact]
+        public void Scaling_labels_are_the_spec_copy()
+            => Assert.Equal(new[] { "Fill", "Whole steps (crisp)", "Whole steps (smooth)", "1:1" }, Scaling.All.Select(UiText.ScalingLabel).ToArray());
 
         [Theory]
         [InlineData("1.0.0", "Framejet 1.0.0")]
@@ -47,13 +67,14 @@ namespace Framejet.Core.Tests.Ui
         static readonly VideoMode Mode1440 = new VideoMode(2560, 1440, 166667, PixelFormat.NV12);
         static readonly Size Screen1440 = new Size(2560, 1440);
         [Fact] public void Status_shows_lines_and_measured_fps() => Assert.Equal("1440p · 59.9 fps · 1:1", StatusText.Format(Mode1440, 59.94, Screen1440, new string[0]));
+        [Fact] public void Status_passes_the_scaling_through() => Assert.Equal("1440p · 59.9 fps · 1:1", StatusText.Format(Mode1440, 59.94, new Size(2560, 1360), new string[0], ScalingMode.OneToOne));
         [Fact] public void Status_appends_warnings() => Assert.Equal("1440p · 59.9 fps · 1:1 · No audio from the card", StatusText.Format(Mode1440, 59.94, Screen1440, new[] { UiText.NoAudio }));
         [Fact] public void Status_without_video_is_just_warnings() => Assert.Equal("No picture — is the PS5 on?", StatusText.Format(null, 0, Screen1440, new[] { UiText.NoPicture }));
 
-        // The last part is how the letterboxed picture is drawn in the video area: 1:1, or its size against the mode's.
+        // The last part is how the picture is drawn in the video area: 1:1, or its size against the mode's.
         [Theory]
         [InlineData(2560, 1440, 2560, 1440, "1440p · 59.9 fps · 1:1")]  // fullscreen on a screen of the mode's size
-        [InlineData(2560, 1440, 2560, 1600, "1440p · 59.9 fps · 1:1")]  // letterboxed, but not scaled
+        [InlineData(2560, 1440, 2560, 1600, "1440p · 59.9 fps · 1:1")]  // placed with bars, but not scaled
         [InlineData(2560, 1440, 2560, 1369, "1440p · 59.9 fps · 95%")]  // maximized on that screen: drawn at 2434x1369
         [InlineData(1920, 1080, 2560, 1440, "1080p · 59.9 fps · 133%")] // 1080p fullscreen on a 1440p screen
         [InlineData(1920, 1080, 2560, 1369, "1080p · 59.9 fps · 127%")] // drawn at 2434x1369: 126.8% rounds up

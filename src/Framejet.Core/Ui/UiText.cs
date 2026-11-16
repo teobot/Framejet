@@ -4,6 +4,19 @@ namespace Framejet.Core.Ui
 {
     public static class UiText
     {
+        public const string ScalingMenu = "Scaling";
+
+        public static string ScalingLabel(ScalingMode mode)
+        {
+            switch (mode)
+            {
+                case ScalingMode.WholeStepsCrisp: return "Whole steps (crisp)";
+                case ScalingMode.WholeStepsSmooth: return "Whole steps (smooth)";
+                case ScalingMode.OneToOne: return "1:1";
+                default: return "Fill";
+            }
+        }
+
         public const string NoCard = "No capture card found";
         public const string NoPicture = "No picture — is the PS5 on?";
         public const string NoAudio = "No audio from the card";
@@ -34,6 +47,20 @@ namespace Framejet.Core.Ui
         public static string OutputGone(string name) => name + " is gone — using " + DefaultOutput;
         public static string AudioError(string message) => "Audio error: " + message;
         public static string AudioRetrying(string message) => AudioError(message) + " — retrying";
+
+        public const string SyncMenu = "Check A/V sync…";
+        public const string SyncPrompt = "Play an A/V sync test video on the PS5 (a flash with a beep), then press Start.";
+        public const string SyncNoFlashes = "No flashes seen — is the sync video playing?";
+        public const string SyncNoBeeps = "No beeps heard — is the PS5's sound on?";
+        public const string SyncTooFewPairs = "Not enough flash-beep pairs; try a longer run.";
+        public const string SyncAmbiguous = "Ambiguous — the video's flashes are too close together.";
+        public const string SyncSourceStopped = "The check stopped: the picture or sound went away.";
+
+        public static string SyncChecking(int seconds) => $"Checking A/V sync… {seconds} s";
+        public static string SyncResult(int ms, int pairs, int spread) =>
+            $"Sound leaves the PC {ms} ms after the picture (from {pairs} flash-beep pairs, spread ±{spread} ms).";
+        public static string SyncSplit(int card, int audio, int picture) =>
+            $"card: {card} ms · Framejet audio: {audio} ms · Framejet picture: {picture} ms";
 
         public static string UpdateTo(string version) => "Update to " + version;
         public static string UpdateTooltip(string version) => "Open the Framejet " + version + " release page";

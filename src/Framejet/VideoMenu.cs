@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows.Forms;
 using Framejet.Core.Devices;
 using Framejet.Core.Ui;
+using Framejet.Core.Video;
 
 namespace Framejet
 {
@@ -55,9 +56,11 @@ namespace Framejet
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(VideoDevices(form));
             menu.Items.Add(Modes(form));
+            menu.Items.Add(ScalingChoices(form));
             menu.Items.Add(Outputs(form));
             menu.Items.Add(Inputs(form));
             menu.Items.Add(Item("Rescan devices", false, form.RescanDevices));
+            menu.Items.Add(new ToolStripMenuItem(UiText.SyncMenu, null, (s, e) => form.CheckAvSync()) { Enabled = form.CanCheckSync });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(Item("Exit", false, form.Close));
             Style(menu.Items);
@@ -87,6 +90,17 @@ namespace Framejet
                     root.DropDownItems.Add(Item(Escape(mode.Label), video.Mode != null && video.Mode.Key == mode.Key, () => video.SelectMode(mode)));
                 }
             return DisableIfEmpty(root);
+        }
+
+        static ToolStripMenuItem ScalingChoices(MainForm form)
+        {
+            var root = new ToolStripMenuItem(UiText.ScalingMenu);
+            foreach (var m in Scaling.All)
+            {
+                var mode = m;
+                root.DropDownItems.Add(Item(UiText.ScalingLabel(mode), form.Settings.Scaling == mode, () => form.SetScaling(mode)));
+            }
+            return root;
         }
 
         static ToolStripMenuItem Outputs(MainForm form)

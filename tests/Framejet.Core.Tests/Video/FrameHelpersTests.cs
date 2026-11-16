@@ -53,6 +53,16 @@ namespace Framejet.Core.Tests.Video
         { var f = new CaptureFormat(64, 64, GrabberFormat.Rgb32, true); var d = new byte[f.FrameBytes]; for (int i = 1; i < d.Length; i += 4) d[i] = 200;
           Assert.Equal(200, LumaSampler.Sample(d, f).Mean, 3); }
 
+        [Theory, InlineData(GrabberFormat.Nv12), InlineData(GrabberFormat.Yuy2), InlineData(GrabberFormat.Uyvy), InlineData(GrabberFormat.Rgb32)]
+        public void Luma_mean_from_a_buffer_matches_the_sampled_mean(GrabberFormat format)
+        {
+            var f = new CaptureFormat(320, 180, format, false); var d = new byte[f.FrameBytes]; var rng = new Random(7); rng.NextBytes(d);
+            var h = GCHandle.Alloc(d, GCHandleType.Pinned);
+            try { Assert.Equal(LumaSampler.Sample(d, f).Mean, LumaSampler.Mean(h.AddrOfPinnedObject(), d.Length, f), 9); }
+            finally { h.Free(); }
+            Assert.Equal(0, LumaSampler.Mean(IntPtr.Zero, 0, f), 9);
+        }
+
         [Fact] public void Dark_fraction_of_the_ripsaw_no_signal_frame_is_about_99_percent()
         {
             var f = new CaptureFormat(1920, 1080, GrabberFormat.Nv12, false); var d = new byte[f.FrameBytes];

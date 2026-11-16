@@ -22,6 +22,7 @@ namespace Framejet.Platform.Video
 
         readonly IVideoHost _host;
         readonly ILog _log;
+        ScalingMode _scaling = ScalingMode.Fill;
         bool _vsync = true, _neverSkip, _paused, _measureLatency;
 
         // The running graph and everything attached to it; all null while stopped.
@@ -31,6 +32,7 @@ namespace Framejet.Platform.Video
         object _streamConfig;
         ISampleGrabber _grabber;
         GrabberCallback _callback; // the grabber holds it only through COM, so keep it reachable here
+        Action<long, double> _arrivalLumaTap;
         GraphEventWindow _eventWindow;
         D3D11Presenter _presenter;
         bool _videoShown;
@@ -50,6 +52,13 @@ namespace Framejet.Platform.Video
         /// post to the UI thread with BeginInvoke, never Invoke.
         /// </summary>
         public event Action<LumaStats> LumaSampled;
+
+        /// <summary>How the picture is sized in the window.</summary>
+        public ScalingMode Scaling
+        {
+            get => _scaling;
+            set { _scaling = value; if (_presenter != null) _presenter.Scaling = value; }
+        }
 
         /// <summary>On (the default): each frame waits for the next refresh. Off: frames show at once and may tear.</summary>
         public bool VSync
@@ -77,6 +86,16 @@ namespace Framejet.Platform.Video
         {
             get => _measureLatency;
             set { _measureLatency = value; if (_presenter != null) _presenter.MeasureLatency = value; }
+        }
+
+        /// <summary>
+        /// While set, called on DirectShow's streaming thread for every frame that arrives, with its arrival stamp (the
+        /// one the presenter gets) and its mean luma. It must return at once and never touch the UI. It carries over to
+        /// later starts until it is set back to null.
+        /// </summary>
+        public Action<long, double> ArrivalLumaTap
+        {
+            set { _arrivalLumaTap = value; if (_callback != null) _callback.LumaTap = value; }
         }
 
         /// <summary>The frames the running graph delivers; null when stopped.</summary>
@@ -188,7 +207,7 @@ namespace Framejet.Platform.Video
                 step = "set up the sample grabber";
                 Check(_grabber.SetBufferSamples(false), device, step);
                 Check(_grabber.SetOneShot(false), device, step);
-                _callback = new GrabberCallback(slot, _log);
+                _callback = new GrabberCallback(slot, format, _log) { LumaTap = _arrivalLumaTap };
                 Check(_grabber.SetCallback(_callback, 1), device, step);
 
                 // 7. No reference clock, so each frame is delivered the moment it arrives. Graph events go to the UI thread.
@@ -203,7 +222,7 @@ namespace Framejet.Platform.Video
                 // 8. The presenter, with the current settings.
                 graphMs = timer.Elapsed.TotalMilliseconds - devicesMs;
                 step = "create the presenter";
-                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, NeverSkipFrames = _neverSkip, Paused = _paused, MeasureLatency = _measureLatency };
+                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, NeverSkipFrames = _neverSkip, Scaling = _scaling, Paused = _paused, MeasureLatency = _measureLatency };
                 _presenter.LumaSampled += OnLumaSampled;
                 _presenter.Start(format, slot);
                 presenterMs = timer.Elapsed.TotalMilliseconds - devicesMs - graphMs;
@@ -268,6 +287,7 @@ namespace Framejet.Platform.Video
                 window.DeviceTaken -= OnGraphDeviceTaken;
                 Quietly("close the graph event window", window.Dispose);
             }
+            if (callback != null) callback.LumaTap = null;
             if (grabber != null) Quietly("detach the frame callback", () => grabber.SetCallback(null, 0));
             GC.KeepAlive(callback); // the grabber held it only through COM, until the detach
 

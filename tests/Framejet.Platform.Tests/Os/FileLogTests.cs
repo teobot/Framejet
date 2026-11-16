@@ -33,6 +33,17 @@ namespace Framejet.Platform.Tests.Os
 
         [Fact] public void The_first_ever_session_creates_only_the_log() { Session(LogPath, "first"); Assert.False(File.Exists(OldPath)); Assert.True(File.Exists(LogPath)); }
 
+        [Fact] public void The_profile_folder_is_written_as_a_placeholder()
+        {
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            Session(LogPath, "Settings " + Path.Combine(profile, "settings.ini"));
+            FileLog.AppendError(LogPath, "Failed at " + Path.GetTempPath(), null); // the temp folder's 8.3 spelling, on most PCs
+            var text = File.ReadAllText(LogPath);
+            Assert.Contains(@"Settings %USERPROFILE%\settings.ini", text);
+            Assert.DoesNotContain(profile, text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Environment.UserName + @"\", text, StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact] public void A_locked_old_log_does_not_stop_logging()
         {
             Session(LogPath, "first"); Session(LogPath, "second");

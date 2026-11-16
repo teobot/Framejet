@@ -63,6 +63,7 @@ namespace Framejet
             _started = true;
             _startedAt = DateTime.Now;
             _form.Settings.VSync = true;
+            _form.Settings.Scaling = ScalingMode.Fill;
             _form.Settings.Muted = true;
             Environment.ExitCode = 1; // until it passes: a run that never finishes must not look like a pass
             _form.TopMost = true;     // measure the picture as it is seen: in front, not covered by another window
@@ -254,6 +255,7 @@ namespace Framejet
             Line("picture brightness: " + Brightness());
             Line("no signal: " + (_form.NoSignal.NoSignal ? "yes" : "no"));
             Line(Invariant($"audio: bytes={audio.BytesCaptured} peak={audio.Peak:0.00} buffer={audio.BufferedMs:0.0} ms max={audio.MaxBufferedMs:0.0} ms trims={audio.Trims}"));
+            Line(audio.Delay.Mode == null ? "audio delay: none" : audio.Delay.ReportLine());
             Line("toolbar: " + (_toolbarState ?? "not measured"));
             Line("menu: " + string.Join(" | ", VideoMenu.TopLevelTexts(_form.VideoContextMenu)));
             Line("errors: " + Errors());
