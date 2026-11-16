@@ -25,9 +25,10 @@ namespace Framejet.Platform.Audio
             _outRate = outputRate;
             WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(outputRate, _channels);
 
-            // The quality settings NAudio's WdlResamplingSampleProvider uses.
-            _resampler.SetMode(true, 2, false);
-            _resampler.SetFilterParms();
+            // Windowed sinc, 64 taps. NAudio's WdlResamplingSampleProvider default (linear interpolation plus an IIR
+            // lowpass) loses several dB at 10-15 kHz, and at near-unity ratios its high-frequency gain swings as
+            // the fractional position sweeps; sinc stays flat.
+            _resampler.SetMode(true, 0, true, 64, 32);
             _resampler.SetFeedMode(false); // output driven
             _resampler.SetRates(_inRate, _outRate);
         }

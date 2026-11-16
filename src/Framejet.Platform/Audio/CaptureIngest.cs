@@ -11,7 +11,7 @@ namespace Framejet.Platform.Audio
     /// <summary>
     /// Takes captured buffers, converts them to float and feeds the playback buffer. A <see cref="DriftController"/>
     /// steers the playback rate to hold the buffer at its target; samples are dropped only after a stall.
-    /// Playback reads silence until the buffer first reaches the target (prefill).
+    /// Playback reads silence until the buffer reaches the target (prefill), at start and again after a stall.
     /// </summary>
     internal sealed class CaptureIngest
     {
@@ -24,7 +24,7 @@ namespace Framejet.Platform.Audio
         readonly ILog _log;
         readonly UnderrunCountingProvider _output;
         readonly object _statsLock = new object();
-        readonly byte[] _drain = new byte[16384];
+        readonly byte[] _drain;
         byte[] _floatScratch = new byte[0]; // touched only on the capture thread
 
         // Buffer level after each packet, newest 6000 (about a minute at 10 ms packets); guarded by _statsLock.
@@ -42,7 +42,8 @@ namespace Framejet.Platform.Audio
         public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, DriftController drift, ILog log)
         {
             _buffer = buffer; _captureFormat = captureFormat; _drift = drift; _log = log ?? NullLog.Instance;
-            _output = new UnderrunCountingProvider(buffer, () => _primed, OnUnderrun);
+            _drain = new byte[buffer.WaveFormat.BlockAlign * 2048]; // whole frames, so a trim never splits one
+            _output = new UnderrunCountingProvider(buffer, IsPrimed, OnUnderrun);
         }
 
         /// <summary>What playback reads: the ring, behind the prefill gate and the underrun count.</summary>
@@ -87,13 +88,18 @@ namespace Framejet.Platform.Audio
                 _log.Info("Audio underrun; buffer target now " + _drift.Target.TotalMilliseconds + " ms");
             }
 
-            int drop = _drift.BytesToTrim(_buffer.BufferedBytes, bf.AverageBytesPerSecond, bf.BlockAlign);
-            bool trimmed = drop > 0;
-            while (drop > 0)
+            bool trimmed = _drift.BytesToTrim(_buffer.BufferedBytes, bf.AverageBytesPerSecond, bf.BlockAlign) > 0;
+            if (trimmed)
             {
-                int read = _buffer.Read(_drain, 0, Math.Min(drop, _drain.Length));
-                if (read <= 0) break;
-                drop -= read;
+                // Recompute from the live level on each pass: playback reads concurrently, and a fixed drop
+                // worked out up front could take the level below the target.
+                int keep = (int)(bf.AverageBytesPerSecond * _drift.Target.TotalSeconds) / bf.BlockAlign * bf.BlockAlign;
+                while (true)
+                {
+                    int excess = (_buffer.BufferedBytes - keep) / bf.BlockAlign * bf.BlockAlign;
+                    if (excess <= 0) break;
+                    if (_buffer.Read(_drain, 0, Math.Min(excess, _drain.Length)) <= 0) break;
+                }
             }
 
             double ms = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
@@ -121,11 +127,21 @@ namespace Framejet.Platform.Audio
             }
         }
 
+        bool Delivering => Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastPacket) <= DeliveringTicks;
+
+        // On the output thread. Once the ring has run dry while the card sends nothing, go back to prefill, so the
+        // card's return refills to the target instead of starting at one packet and underrunning.
+        bool IsPrimed()
+        {
+            if (!_primed) return false;
+            if (_buffer.BufferedBytes == 0 && !Delivering) { _primed = false; return false; }
+            return true;
+        }
+
         // On the output thread.
         void OnUnderrun()
         {
-            if (Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastPacket) <= DeliveringTicks)
-                Interlocked.Increment(ref _pendingUnderruns);
+            if (Delivering) Interlocked.Increment(ref _pendingUnderruns);
         }
 
         /// <summary>

@@ -14,9 +14,9 @@ namespace Framejet.Platform.Audio
         readonly Func<bool> _primed;
         readonly Action _underrun;
         int _underruns;
-        bool _seenAudio;
+        bool _seenAudio; // touched only on the reading thread
 
-        /// <param name="primed">Whether playback may take from the ring yet; null means always.</param>
+        /// <param name="primed">Whether playback may take from the ring now, asked on every read; null means always.</param>
         /// <param name="underrun">Called on the reading thread after each counted underrun; it must return at once.</param>
         public UnderrunCountingProvider(BufferedWaveProvider source, Func<bool> primed = null, Action underrun = null)
         {

@@ -54,6 +54,35 @@ namespace Framejet.Platform.Tests.Audio
             double consumed = (before - src.BufferedBytes) / 8.0;
             Assert.InRange(consumed, 48240 * 0.999, 48240 * 1.001);
         }
+        // Near-unity ratios sweep the resampler's fractional position slowly; a poor interpolator then makes the
+        // high-frequency gain swing. The gain must stay flat block to block and close to the input's.
+        [Theory]
+        [InlineData(48000, 10000, 1.0001)] [InlineData(48000, 15000, 1.0001)]
+        [InlineData(48000, 10000, 1.005)] [InlineData(48000, 15000, 1.005)]
+        [InlineData(44100, 15000, 1.0001)] [InlineData(96000, 15000, 1.0001)]
+        public void Variable_resampler_keeps_high_frequencies_flat(int outRate, int freq, double ratio)
+        {
+            const int inRate = 48000; const double amp = 0.5;
+            var src = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(inRate, 1)) { BufferDuration = TimeSpan.FromSeconds(4), ReadFully = false };
+            var bytes = new byte[inRate * 3 * 4];
+            for (int i = 0; i < inRate * 3; i++) BitConverter.GetBytes((float)(amp * Math.Sin(2 * Math.PI * freq * i / inRate))).CopyTo(bytes, i * 4);
+            src.AddSamples(bytes, 0, bytes.Length);
+
+            var p = PlaythroughChain.Build(src, WaveFormat.CreateIeeeFloatWaveFormat(outRate, 1), out _, out var resampler);
+            resampler.Ratio = ratio;
+            int block = outRate / 100; var s = new float[block];
+            double inputRms = amp / Math.Sqrt(2), min = double.MaxValue, max = double.MinValue;
+            for (int b = 0; b < 180; b++)
+            {
+                Assert.Equal(block, p.Read(s, 0, block));
+                if (b < 10) continue; // let the filter settle
+                double db = 20 * Math.Log10(Math.Sqrt(s.Sum(x => (double)x * x) / block) / inputRms);
+                min = Math.Min(min, db); max = Math.Max(max, db);
+            }
+            Assert.True(max - min <= 0.4, $"gain swings {min:0.00}..{max:0.00} dB");
+            Assert.True(min >= -0.5 && max <= 0.5, $"gain {min:0.00}..{max:0.00} dB vs input");
+        }
+
         [Fact] public void Pcm16_converts_to_float()
         { var src = BitConverter.GetBytes((short)16384); var dst = new byte[4];
           Assert.Equal(4, PlaythroughChain.ToFloat(src, 2, new WaveFormat(48000, 16, 1), dst)); Assert.Equal(0.5, (double)BitConverter.ToSingle(dst, 0), 3); }

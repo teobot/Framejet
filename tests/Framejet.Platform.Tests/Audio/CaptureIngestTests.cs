@@ -77,6 +77,33 @@ namespace Framejet.Platform.Tests.Audio
         }
 
         [Fact]
+        public void Prefill_rearms_after_a_stall()
+        {
+            var ingest = Make(out var buf, out var drift);
+            var read = new byte[48 * 20 * 8];
+            ingest.Process(Chunk(10, 0.5f), 48 * 10 * 8);
+
+            System.Threading.Thread.Sleep(150); // the card stalls; playback drains the ring
+            ingest.Output.Read(read, 0, read.Length);
+            Assert.Equal(0, buf.BufferedBytes);
+            ingest.Output.Read(read, 0, read.Length); // empty while the card is silent: back to prefill
+            int underruns = ingest.Underruns;
+
+            ingest.Process(Chunk(5, 0.5f), 48 * 5 * 8); // the card resumes, below target
+            ingest.Output.Read(read, 0, read.Length);
+            Assert.All(read, b => Assert.Equal(0, b));
+            Assert.Equal(5.0, LevelMs(buf), 3);
+            Assert.Equal(underruns, ingest.Underruns);
+
+            ingest.Process(Chunk(5, 0.5f), 48 * 5 * 8); // target reached: plays again
+            ingest.Output.Read(read, 0, 48 * 10 * 8);
+            Assert.Equal(0.5, (double)BitConverter.ToSingle(read, 0), 6);
+            ingest.Process(Chunk(10, 0.5f), 48 * 10 * 8);
+            Assert.Equal(10, drift.Target.TotalMilliseconds);
+            Assert.Equal(underruns, ingest.Underruns);
+        }
+
+        [Fact]
         public void Pushes_the_ratio_to_the_resampler()
         {
             var ingest = Make(out _, out _);
