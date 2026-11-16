@@ -62,6 +62,22 @@ namespace Framejet.Platform.Tests.Video
                 Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples");
                 Assert.True(s.QueueWait.Count > 0, "no queue wait samples"); });
 
+        // A Present that fails after its wait (not a device loss) queues nothing. The count it took must go to the next frame,
+        // or every later 4 ms wait in the default mode times out and the picture stalls.
+        [SkippableFact, Trait("Category", "Hardware")] public void A_failed_present_does_not_stall_the_default_mode()
+            => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulatePresentFailure();
+                var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats(); string msg = $"drawn {s.Drawn}, dropped {s.Dropped}";
+                Assert.True(s.Drawn >= 100, msg); Assert.True(s.Dropped <= 6, msg); });
+
+        // A count lost to an error the bookkeeping can't see makes every 4 ms wait time out. After 1 s of that, the frame
+        // statistics show the queue empty and the next frame takes the lost count. Their first call reports DISJOINT, which
+        // this covers too: without the retry, the default mode draws one frame a second.
+        [SkippableFact, Trait("Category", "Hardware")] public void Recovers_from_a_lost_queue_count_within_about_a_second()
+            => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulateLostQueueCount();
+                var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats(); Assert.True(s.Drawn >= 70, $"drawn {s.Drawn}, dropped {s.Dropped}"); });
+
         // ResizeBuffers must pass the flags the swap chain was created with, the waitable-object flag included, or it fails.
         [SkippableFact, Trait("Category", "Hardware")] public void Waitable_swap_chain_survives_resize()
             => WithPresenter((p, slot, f, form) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5));
