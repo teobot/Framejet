@@ -29,7 +29,7 @@ Anyone running a downloaded copy of Framejet should find out when a newer releas
 - **Version comparison:** SemVer-style on `major.minor.patch[.n]` with a pre-release suffix sorting below the plain version (1.2.0-rc.1 < 1.2.0). A running version newer than the latest shows nothing. A leading `v` on the tag is ignored; `+metadata` is ignored.
 - **Dev builds:** local and "Run workflow" builds get version `0.0.0-dev` (today they say 1.0.0, which would always show the pill). Any version with a `-dev` suffix skips the check. Release builds keep their tag version.
 - **Self-test** never checks.
-- **Opt-out:** `CheckForUpdates=false` in `settings.ini` turns the check off (default on, no UI). The README says Framejet asks GitHub for the latest release on start, and how to turn it off.
+- **Opt-out:** `update.check=false` in `settings.ini` turns the check off (default on, no UI). The README says Framejet asks GitHub for the latest release on start, and how to turn it off.
 
 ## Approaches
 

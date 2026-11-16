@@ -6,6 +6,7 @@ using System.Globalization;
 using static System.FormattableString;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using Framejet.Core;
@@ -13,6 +14,7 @@ using Framejet.Core.Audio;
 using Framejet.Core.Settings;
 using Framejet.Core.Ui;
 using Framejet.Core.Timing;
+using Framejet.Core.Updates;
 using Framejet.Core.Video;
 using Framejet.Platform.Audio;
 using Framejet.Platform.Devices;
@@ -65,6 +67,8 @@ namespace Framejet
         bool _cursorHidden;
         bool _firstFrameLogged;
         bool _closed;
+        IDisposable _updateTimer;
+        bool _updateStarted;
 
         public MainForm(CommandLine cmd)
         {
@@ -135,6 +139,9 @@ namespace Framejet
         public ILog Log { get; }
         public ToolbarWindow Toolbar => _toolbar;
         public bool IsFullscreen { get; private set; }
+
+        /// <summary>The newer release to offer, or null (nothing found yet, or already up to date).</summary>
+        public UpdateOffer AvailableUpdate { get; private set; }
 
         /// <summary>The right-click menu; also shown by the toolbar.</summary>
         public ContextMenuStrip VideoContextMenu => _menu;
@@ -302,6 +309,51 @@ namespace Framejet
             VideoBackend.LumaSampled += OnLumaSampled;
             if (!_selfTesting) _statsTimer.Start(); // its audio stats reset would zero the self-test's figures
             Video.Refresh();
+            if (UpdateCheck.ShouldCheck(Application.ProductVersion, Settings.CheckForUpdates, _selfTesting))
+                _updateTimer = Clock.After(UpdateCheck.Delay, StartUpdateCheck);
+        }
+
+        void StartUpdateCheck()
+        {
+            if (_closed || _updateStarted) return;
+            _updateStarted = true;
+            var running = Application.ProductVersion;
+            Task.Run(() =>
+            {
+                try
+                {
+                    var json = LatestRelease.Fetch(UpdateCheck.LatestReleaseApi, UpdateCheck.UserAgent(running), UpdateCheck.Timeout);
+                    var offer = UpdateCheck.Evaluate(running, ReleaseInfo.Parse(json));
+                    _dispatcher.Post(() => ApplyUpdate(offer));
+                }
+                catch (Exception ex)
+                {
+                    _dispatcher.Post(() => { if (!_closed) Log.Error("Update check failed", ex); });
+                }
+            });
+        }
+
+        void ApplyUpdate(UpdateOffer offer)
+        {
+            if (_closed) return;
+            AvailableUpdate = offer;
+            Log.Info("Update check: " + (offer == null ? "up to date" : offer.Version + " available"));
+            _toolbar?.SetUpdate(offer); // a quiet notice: it does not raise the toolbar
+        }
+
+        /// <summary>Opens the release page of the offered update in the browser.</summary>
+        public void OpenUpdatePage()
+        {
+            var offer = AvailableUpdate;
+            if (offer == null) return;
+            try
+            {
+                Process.Start(new ProcessStartInfo(offer.PageUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Opening the release page failed", ex);
+            }
         }
 
         protected override void WndProc(ref Message m)
@@ -502,6 +554,7 @@ namespace Framejet
             base.OnFormClosed(e);
             if (_closed) return;
             _closed = true;
+            _updateTimer?.Dispose();
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _cursorTimer.Stop();
             ShowCursorNow();
