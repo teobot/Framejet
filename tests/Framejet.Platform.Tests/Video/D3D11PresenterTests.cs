@@ -40,11 +40,11 @@ namespace Framejet.Platform.Tests.Video
         [Theory]
         [InlineData(true, false, true, 1, 0, 4, true)]
         [InlineData(true, false, false, 1, 0, 4, true)]
-        [InlineData(true, true, true, 1, 0, 1000, false)]
-        [InlineData(true, true, false, 1, 0, 1000, false)]
-        [InlineData(false, false, true, 0, 0x200, 1000, false)]
-        [InlineData(false, true, true, 0, 0x200, 1000, false)]
-        [InlineData(false, false, false, 0, 0, 1000, false)]
+        [InlineData(true, true, true, 1, 0, 1000, true)]
+        [InlineData(true, true, false, 1, 0, 1000, true)]
+        [InlineData(false, false, true, 0, 0x200, 1000, true)]
+        [InlineData(false, true, true, 0, 0x200, 1000, true)]
+        [InlineData(false, false, false, 0, 0, 1000, true)]
         public void Plans_the_present(bool vsync, bool neverSkip, bool tearing, int interval, int flags, int waitMs, bool skip)
         {
             var plan = D3D11Presenter.Plan(vsync, neverSkip, tearing);
@@ -62,21 +62,27 @@ namespace Framejet.Platform.Tests.Video
                 Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples");
                 Assert.True(s.QueueWait.Count > 0, "no queue wait samples"); });
 
-        // A Present that fails after its wait (not a device loss) queues nothing. The count it took must go to the next frame,
-        // or every later 4 ms wait in the default mode times out and the picture stalls.
+        // A Present that fails after its wait (not a device loss) queues nothing. The slot it took must go to the next frame,
+        // or every later 4 ms wait in the default mode times out until the swap chain is recreated.
         [SkippableFact, Trait("Category", "Hardware")] public void A_failed_present_does_not_stall_the_default_mode()
             => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulatePresentFailure();
                 var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
-                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats(); string msg = $"drawn {s.Drawn}, dropped {s.Dropped}";
-                Assert.True(s.Drawn >= 100, msg); Assert.True(s.Dropped <= 6, msg); });
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats(); string msg = $"drawn {s.Drawn}, dropped {s.Dropped}, recreated {p.SwapChainRecreates}";
+                Assert.True(s.Drawn >= 100, msg); Assert.True(s.Dropped <= 6, msg); Assert.Equal(0, p.SwapChainRecreates); });
 
-        // A count lost to an error the bookkeeping can't see makes every 4 ms wait time out. After 1 s of that, the frame
-        // statistics show the queue empty and the next frame takes the lost count. Their first call reports DISJOINT, which
-        // this covers too: without the retry, the default mode draws one frame a second.
-        [SkippableFact, Trait("Category", "Hardware")] public void Recovers_from_a_lost_queue_count_within_about_a_second()
+        // A slot lost to an error not foreseen makes every 4 ms wait time out. After 1 s with no slot, the presenter recreates
+        // the swap chain, which resets the waitable object, and drawing resumes. That is not a device loss.
+        [SkippableFact, Trait("Category", "Hardware")] public void Recreates_the_swap_chain_when_no_slot_comes_for_a_second()
             => WithPresenter((p, slot, f) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5)); p.SimulateLostQueueCount();
-                var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
-                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats(); Assert.True(s.Drawn >= 70, $"drawn {s.Drawn}, dropped {s.Dropped}"); });
+                var since = Stopwatch.StartNew(); Sta.Pump(TimeSpan.FromMilliseconds(100)); long frozenAt = p.GetStats().Drawn; double resumedMs = -1;
+                while (feeder.IsAlive && since.Elapsed < TimeSpan.FromSeconds(8))
+                {
+                    Sta.Pump(TimeSpan.FromMilliseconds(20));
+                    if (resumedMs < 0 && p.GetStats().Drawn > frozenAt + 2) resumedMs = since.Elapsed.TotalMilliseconds;
+                }
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
+                string msg = $"resumed after {resumedMs:0} ms, drawn {s.Drawn}, dropped {s.Dropped}, recreated {p.SwapChainRecreates}, device resets {s.DeviceResets}";
+                Assert.True(resumedMs >= 900 && resumedMs <= 1500, msg); Assert.Equal(1, p.SwapChainRecreates); Assert.Equal(0, s.DeviceResets); Assert.True(s.Drawn >= 70, msg); });
 
         // ResizeBuffers must pass the flags the swap chain was created with, the waitable-object flag included, or it fails.
         [SkippableFact, Trait("Category", "Hardware")] public void Waitable_swap_chain_survives_resize()

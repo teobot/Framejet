@@ -9,7 +9,7 @@ namespace Framejet.Platform.Video
         public long Arrived { get; set; }
         /// <summary>Frames presented.</summary>
         public long Drawn { get; set; }
-        /// <summary>Frames replaced by a newer one before drawing, or skipped (paused, no window area, device lost, or the display queue still busy after 4 ms).</summary>
+        /// <summary>Frames replaced by a newer one before drawing, or skipped (paused, no window area, device lost, or no display-queue slot within the wait: 4 ms by default, 1 s with never-skip or V-Sync Off).</summary>
         public long Dropped { get; set; }
         /// <summary>Frames drawn per second over the last second: the intervals between them over the time they span (59.94, not 60).</summary>
         public double MeasuredFps { get; set; }

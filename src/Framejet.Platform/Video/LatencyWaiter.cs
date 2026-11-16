@@ -2,84 +2,75 @@ using System;
 
 namespace Framejet.Platform.Video
 {
+    /// <summary>What a frame got from the display queue before its present.</summary>
+    internal enum QueueSlot
+    {
+        /// <summary>The frame holds a slot: present it.</summary>
+        Taken,
+        /// <summary>The wait timed out: skip the frame.</summary>
+        Busy,
+        /// <summary>No slot has come for the stuck time while frames kept arriving: skip the frame and recreate the swap chain.</summary>
+        Stuck,
+    }
+
     /// <summary>
-    /// Waits for the swap chain's frame-latency waitable object before each present, and keeps its count in step with the
-    /// presents. The object is a semaphore that gains one for every present that leaves the display queue, with no cap
-    /// (measured). So a present that took no count leaves a surplus, and later waits return while a frame is still queued.
-    /// A count taken by a frame that never presented is never given back, and every later wait times out. The debt tracks both.
-    /// Render thread only.
+    /// Takes a slot from the swap chain's frame-latency waitable object before each present. The object is a semaphore that
+    /// gains one for every present that leaves the display queue, with no cap (measured), so a present without a slot would
+    /// leave a surplus that lifts the latency limit for good. A frame is therefore never presented without one, and a slot
+    /// taken by a frame whose Present failed goes to the next frame. Render thread only.
     /// </summary>
     internal sealed class LatencyWaiter
     {
-        public const uint Signalled = 0;     // WAIT_OBJECT_0
-        public const uint TimedOut = 0x102; // WAIT_TIMEOUT
+        public const uint Signalled = 0; // WAIT_OBJECT_0; any other result is no slot
 
         readonly Func<uint, uint> _wait;
-        readonly Func<bool> _queueEmpty;
-        readonly long _guardTicks;
-        int _debt;           // > 0: presents that took no count; < 0: a count taken by a frame that did not present
-        long _timeoutsSince; // when the current run of skipping timeouts began; 0 when there is none
+        readonly Func<long> _clock;
+        readonly long _stuckTicks;
+        bool _held;                    // a slot taken by a frame whose Present failed
+        long _busySince, _lastBusyEnd; // the current run of timed-out waits: when it began and when its last wait ended; 0 when none
 
-        /// <param name="wait">Waits on the object for up to the given ms; returns <see cref="Signalled"/> or <see cref="TimedOut"/>.</param>
-        /// <param name="queueEmpty">True when the last frame presented is known to have reached the screen.</param>
-        /// <param name="guardTicks">How long the skipping timeouts may run back to back before a frame is presented anyway.</param>
-        public LatencyWaiter(Func<uint, uint> wait, Func<bool> queueEmpty, long guardTicks)
+        /// <param name="wait">Waits on the object for up to the given ms and returns the WaitForSingleObject result.</param>
+        /// <param name="clock">The time, in the ticks <paramref name="stuckTicks"/> is in.</param>
+        /// <param name="stuckTicks">How long no slot may come while frames keep arriving before the queue counts as stuck.</param>
+        public LatencyWaiter(Func<uint, uint> wait, Func<long> clock, long stuckTicks)
         {
             _wait = wait;
-            _queueEmpty = queueEmpty;
-            _guardTicks = guardTicks;
+            _clock = clock;
+            _stuckTicks = stuckTicks;
         }
 
-        /// <summary>
-        /// Waits before one present. False: skip the frame. True: present it, then call <see cref="Presented"/> or
-        /// <see cref="PresentFailed"/> with <paramref name="took"/>, which says whether the frame holds a count.
-        /// </summary>
-        public bool BeforePresent(uint waitMs, bool skipOnTimeout, long now, out bool took)
+        /// <summary>Waits up to <paramref name="waitMs"/> for a slot. After a failed Present, the frame takes its slot without waiting.</summary>
+        public QueueSlot BeforePresent(uint waitMs)
         {
-            if (_debt < 0)
+            if (_held)
             {
-                _debt++; // the count a frame took before its present failed
-                took = true;
+                _held = false;
+                return QueueSlot.Taken;
             }
-            else
+            long start = _clock();
+            if (_wait(waitMs) == Signalled)
             {
-                while (_debt > 0 && _wait(0) == Signalled) _debt--; // the surplus left by presents that took no count
-                took = _wait(waitMs) != TimedOut;
+                _busySince = 0;
+                return QueueSlot.Taken;
             }
-            if (!took && skipOnTimeout)
-            {
-                if (_timeoutsSince == 0) _timeoutsSince = now;
-                if (now - _timeoutsSince < _guardTicks) return false;
-                // A second of back-to-back timeouts. If the last frame presented is on screen, the queue is empty and the
-                // count has fallen short through an error not foreseen here: this frame takes the lost count (or the one
-                // that has just come). Otherwise the display has stalled: present anyway, as a present that took no count.
-                if (_queueEmpty())
-                {
-                    _wait(0);
-                    took = true;
-                }
-            }
-            _timeoutsSince = 0;
-            return true;
+            long end = _clock();
+            // Timeouts count back to back while frames keep arriving. A gap with no frames waiting (paused, stopped, no signal)
+            // starts a new run.
+            if (_busySince == 0 || start - _lastBusyEnd > _stuckTicks / 4) _busySince = start;
+            _lastBusyEnd = end;
+            if (end - _busySince < _stuckTicks) return QueueSlot.Busy;
+            _busySince = 0;
+            return QueueSlot.Stuck;
         }
 
-        /// <summary>The present succeeded.</summary>
-        public void Presented(bool took)
-        {
-            if (!took) _debt++;
-        }
+        /// <summary>The Present failed, so nothing was queued and the slot the frame took goes to the next frame.</summary>
+        public void PresentFailed() => _held = true;
 
-        /// <summary>The present failed, so nothing was queued and a count the frame took is still free.</summary>
-        public void PresentFailed(bool took)
-        {
-            if (took) _debt--;
-        }
-
-        /// <summary>Forgets the debt and the timeouts with the swap chain they belong to.</summary>
+        /// <summary>Forgets a held slot and the timeouts with the swap chain they belong to.</summary>
         public void Reset()
         {
-            _debt = 0;
-            _timeoutsSince = 0;
+            _held = false;
+            _busySince = 0;
         }
     }
 }
