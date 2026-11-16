@@ -147,7 +147,8 @@ namespace Framejet.Platform.Audio
             int _underrunBase;
             volatile bool _disposed;
 
-            const int CaptureBufferMs = 10, OutputLatencyMs = 10;
+            const int CaptureBufferMs = 10, OutputLatencyMs = 20;
+            string _captureSource = "fallback", _outputSource = "fallback";
 
             public VolumeSampleProvider Volume { get; private set; }
 
@@ -191,6 +192,7 @@ namespace Framejet.Platform.Audio
                 _out.Play();
                 _capture.StartRecording();
                 ReadCaptureClient();
+                _owner._log.Info("Audio delay figures: capture=" + _captureSource + ", output=" + _outputSource);
             }
 
             public AudioStats Snapshot(bool reset)
@@ -215,7 +217,7 @@ namespace Framejet.Platform.Audio
                 _captureMs = CaptureBufferMs;
                 var c = LiveClient(_capture, "audioClient");
                 if (c == null) return;
-                try { _captureMs += c.StreamLatency / 10000.0; _periodMs = c.DefaultDevicePeriod / 10000.0; }
+                try { _captureMs += c.StreamLatency / 10000.0; _periodMs = c.DefaultDevicePeriod / 10000.0; _captureSource = "live client"; }
                 catch (Exception ex) { _owner._log.Error("Capture latency unreadable", ex); }
             }
 
@@ -225,7 +227,7 @@ namespace Framejet.Platform.Audio
                 var c = LiveClient(_out, "audioClient");
                 if (c == null) return;
                 _padding.Client = c;
-                try { _outStreamMs = c.StreamLatency / 10000.0; }
+                try { _outStreamMs = c.StreamLatency / 10000.0; _outputSource = "live client"; }
                 catch (Exception ex) { _owner._log.Error("Output latency unreadable", ex); }
             }
 
