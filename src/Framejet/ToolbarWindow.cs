@@ -53,6 +53,7 @@ namespace Framejet
         long _lastFadeMs;
         int _openDropDowns;
         bool _hover, _refreshing, _held;
+        bool _showUpdate; // not _update.Visible: that is false whenever the toolbar window is hidden
 
         public ToolbarWindow(MainForm owner)
         {
@@ -95,6 +96,7 @@ namespace Framejet
             _update.FlatAppearance.MouseDownBackColor = DarkTheme.AccentBorder;
             _update.SizeChanged += (s, e) => RoundPill();
             Controls.Add(_update);
+            _update.BringToFront(); // above the status label, which can reach it
 
             _tips.SetToolTip(_rescan, "Rescan devices");
             _tips.SetToolTip(_mute, "Mute (M)");
@@ -209,6 +211,7 @@ namespace Framejet
         public void SetUpdate(UpdateOffer offer)
         {
             if (IsDisposed) return;
+            _showUpdate = offer != null;
             if (offer == null) _update.Visible = false;
             else
             {
@@ -442,7 +445,7 @@ namespace Framejet
                 x += w + gap;
             }
             int right = ClientSize.Width - Px(PadPx);
-            if (_update.Visible)
+            if (_showUpdate)
             {
                 int pillWidth = TextRenderer.MeasureText(_update.Text, _update.Font).Width + Px(20);
                 _update.SetBounds(right - pillWidth, top, pillWidth, height);
