@@ -22,9 +22,7 @@ namespace Framejet.Platform.Tests.TestSupport
             _form = new Form { Text = "Framejet test video", TopMost = true, BackColor = Color.Black };
             if (fullscreenOnPrimary)
             {
-                _form.FormBorderStyle = FormBorderStyle.None;
-                _form.StartPosition = FormStartPosition.Manual;
-                _form.Bounds = Screen.PrimaryScreen.Bounds;
+                OnPrimaryScreen.Cover(_form);
             }
             else
             {

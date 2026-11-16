@@ -16,7 +16,7 @@ namespace Framejet.Platform.Tests.Video
         static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat> body) => WithPresenter((p, slot, f, _) => body(p, slot, f));
         static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat, Form> body) => Sta.Run(() =>
         {
-            using var form = OnPrimaryScreen.Centre(new Form { Width = 1280, Height = 720 }); form.Show();
+            using var form = NewWindow();
             var f = new CaptureFormat(1280, 720, GrabberFormat.Nv12, false); var slot = new LatestFrameSlot(f.FrameBytes);
             using var p = new D3D11Presenter(form.Handle, NullLog.Instance); p.Start(f, slot); body(p, slot, f, form); p.Stop();
         });
@@ -105,7 +105,7 @@ namespace Framejet.Platform.Tests.Video
         [SkippableFact, Trait("Category", "Hardware")] public void A_render_thread_that_outlives_dispose_still_frees_the_window()
             => Sta.Run(() =>
             {
-                using var form = OnPrimaryScreen.Centre(new Form { Width = 1280, Height = 720 }); form.Show();
+                using var form = NewWindow();
                 var f = new CaptureFormat(1280, 720, GrabberFormat.Nv12, false);
                 using var blocked = new ManualResetEventSlim(); using var unblock = new ManualResetEventSlim();
                 var slot = new LatestFrameSlot(f.FrameBytes);
@@ -119,6 +119,14 @@ namespace Framejet.Platform.Tests.Video
                 var nextSlot = new LatestFrameSlot(f.FrameBytes); next.Start(f, nextSlot); Feed(nextSlot, f, 60); Sta.Pump(TimeSpan.FromSeconds(1));
                 Assert.True(next.GetStats().Drawn >= 30, $"drawn {next.GetStats().Drawn}"); next.Stop();
             });
+
+        /// <summary>A shown 1280x720 window on the primary screen, TopMost like TestVideoHost's so a window active there can't cover it.</summary>
+        static Form NewWindow()
+        {
+            var form = new Form { Width = 1280, Height = 720, TopMost = true };
+            OnPrimaryScreen.Centre(form); form.Show();
+            return form;
+        }
 
         static D3D11Presenter CreateWithin(IntPtr hwnd, TimeSpan limit)
         {
