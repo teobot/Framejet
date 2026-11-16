@@ -93,7 +93,7 @@ namespace Framejet
             NoSignal = new NoSignalDetector();
             _autoHide = new ToolbarAutoHide(Clock.Now);
 
-            Text = "Framejet";
+            Text = UiText.NameAndVersion(Application.ProductVersion); // shows which copy this is
             Icon = new Icon(typeof(MainForm).Assembly.GetManifestResourceStream("Framejet.ico"));
             BackColor = DarkTheme.Window;
             StartPosition = FormStartPosition.Manual;
