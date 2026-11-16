@@ -94,7 +94,7 @@ namespace Framejet
             NoSignal = new NoSignalDetector();
             _autoHide = new ToolbarAutoHide(Clock.Now);
 
-            Text = "Framejet";
+            Text = UiText.NameAndVersion(Application.ProductVersion); // shows which copy this is
             Icon = new Icon(typeof(MainForm).Assembly.GetManifestResourceStream("Framejet.ico"));
             BackColor = DarkTheme.Window;
             StartPosition = FormStartPosition.Manual;
@@ -148,13 +148,13 @@ namespace Framejet
         public ContextMenuStrip VideoContextMenu => _menu;
 
         /// <summary>How the picture is drawn in the video area: "1:1" pixel for pixel, or a percentage. Null with no mode or no area.</summary>
-        public string PictureScale => Video?.Mode == null ? null : StatusText.Scale(Video.Mode.Width, Video.Mode.Height, _surface.VideoSize);
+        public string PictureScale => Video?.Mode == null ? null : StatusText.Scale(Video.Mode.Width, Video.Mode.Height, _surface.VideoSize, Settings.Scaling);
 
         /// <summary>
         /// The status without warnings, such as "1440p · 59.9 fps · 1:1", while video runs; otherwise null. The right-click
         /// menu shows it, so it can be read in fullscreen, where the toolbar never shows.
         /// </summary>
-        public string PictureStatus => Video?.State == VideoState.Running ? StatusText.Format(Video.Mode, VideoBackend?.MeasuredFps ?? 0, _surface.VideoSize, null) : null;
+        public string PictureStatus => Video?.State == VideoState.Running ? StatusText.Format(Video.Mode, VideoBackend?.MeasuredFps ?? 0, _surface.VideoSize, null, Settings.Scaling) : null;
 
         public IReadOnlyList<ScreenInfo> Screens()
             => Screen.AllScreens.Select(s => new ScreenInfo(s.DeviceName, s.Bounds, s.WorkingArea, s.Primary)).ToList();
@@ -200,6 +200,16 @@ namespace Framejet
             if (VideoBackend != null) VideoBackend.VSync = Settings.VSync;
             SaveSettings();
             _toolbar?.RefreshToggles(); // from the menu as well as from the toolbar
+        }
+
+        /// <summary>The Scaling choice: in the settings and the running presenter.</summary>
+        public void SetScaling(ScalingMode mode)
+        {
+            if (_closed) return;
+            Settings.Scaling = mode;
+            if (VideoBackend != null) VideoBackend.Scaling = mode;
+            SaveSettings();
+            _toolbar?.RefreshContent(false);
         }
 
         /// <summary>User-initiated rescan: also takes the card back after another app took it.</summary>
@@ -313,7 +323,7 @@ namespace Framejet
         void StartDevices()
         {
             _dispatcher = new ControlDispatcher(this);
-            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, Paused = WindowState == FormWindowState.Minimized };
+            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, Scaling = Settings.Scaling, Paused = WindowState == FormWindowState.Minimized };
             AudioBackend = new WasapiAudioBackend(Log);
             try
             {
@@ -505,7 +515,7 @@ namespace Framejet
             _warnings.Clear();
             _warnings.AddRange(warnings);
             var fps = VideoBackend != null ? VideoBackend.MeasuredFps : 0; // not GetStats: it allocates ~150 KB, and the GCs pause the render thread
-            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, _surface.VideoSize, warnings));
+            _toolbar.SetStatus(StatusText.Format(Video.Mode, fps, _surface.VideoSize, warnings, Settings.Scaling));
         }
 
         /// <summary>

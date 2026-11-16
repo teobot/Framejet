@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using Framejet.Core.Video;
 
 namespace Framejet.Core.Settings
 {
@@ -48,6 +49,7 @@ namespace Framejet.Core.Settings
                             s.Volume = Math.Max(0f, Math.Min(1f, v));
                         break;
                     case "muted": if (bool.TryParse(value, out var m)) s.Muted = m; break;
+                    case "scaling": s.Scaling = Scaling.Parse(value); break;
                     case "vsync": if (bool.TryParse(value, out var vs)) s.VSync = vs; break;
                     case "update.check": if (bool.TryParse(value, out var uc)) s.CheckForUpdates = uc; break;
                     case "window.x": x = ParseInt(value); break;
@@ -85,6 +87,7 @@ namespace Framejet.Core.Settings
             Line("volume", s.Volume.ToString("0.###", inv));
             Line("muted", B(s.Muted));
             Line("vsync", B(s.VSync));
+            Line("scaling", Scaling.Key(s.Scaling));
             Line("update.check", B(s.CheckForUpdates));
             if (s.Window.HasBounds)
             {

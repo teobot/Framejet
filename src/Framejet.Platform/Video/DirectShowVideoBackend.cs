@@ -22,6 +22,7 @@ namespace Framejet.Platform.Video
 
         readonly IVideoHost _host;
         readonly ILog _log;
+        ScalingMode _scaling = ScalingMode.Fill;
         bool _vsync = true, _paused, _measureLatency;
 
         // The running graph and everything attached to it; all null while stopped.
@@ -51,6 +52,13 @@ namespace Framejet.Platform.Video
         /// post to the UI thread with BeginInvoke, never Invoke.
         /// </summary>
         public event Action<LumaStats> LumaSampled;
+
+        /// <summary>How the picture is sized in the window.</summary>
+        public ScalingMode Scaling
+        {
+            get => _scaling;
+            set { _scaling = value; if (_presenter != null) _presenter.Scaling = value; }
+        }
 
         /// <summary>On (the default): each frame waits for the next refresh. Off: frames show at once and may tear.</summary>
         public bool VSync
@@ -207,7 +215,7 @@ namespace Framejet.Platform.Video
                 // 8. The presenter, with the current settings.
                 graphMs = timer.Elapsed.TotalMilliseconds - devicesMs;
                 step = "create the presenter";
-                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, Paused = _paused, MeasureLatency = _measureLatency };
+                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, Scaling = _scaling, Paused = _paused, MeasureLatency = _measureLatency };
                 _presenter.LumaSampled += OnLumaSampled;
                 _presenter.Start(format, slot);
                 presenterMs = timer.Elapsed.TotalMilliseconds - devicesMs - graphMs;

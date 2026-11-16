@@ -28,8 +28,8 @@ namespace Framejet.Platform.Tests.TestSupport
             }
             else
             {
-                _form.StartPosition = FormStartPosition.CenterScreen;
                 _form.ClientSize = new Size(width, height);
+                OnPrimaryScreen.Centre(_form);
             }
             _panel = new VideoPanel { Dock = DockStyle.Fill, Visible = false };
             _form.Controls.Add(_panel);

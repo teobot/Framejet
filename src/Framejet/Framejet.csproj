@@ -4,6 +4,9 @@
     <RootNamespace>Framejet</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Framejet.ico</ApplicationIcon>
+    <!-- The exe's "File description", which Explorer shows on hover and in Properties. Matches UiText.NameAndVersion. -->
+    <AssemblyTitle>Framejet $(Version)</AssemblyTitle>
+    <AssemblyTitle Condition="'$(Version)' == '0.0.0-dev'">Framejet (dev build)</AssemblyTitle>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Framejet.ico" LogicalName="Framejet.ico" />

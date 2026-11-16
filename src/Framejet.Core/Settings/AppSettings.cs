@@ -1,4 +1,5 @@
 using System.Drawing;
+using Framejet.Core.Video;
 
 namespace Framejet.Core.Settings
 {
@@ -30,6 +31,7 @@ namespace Framejet.Core.Settings
         public float Volume { get; set; } = 1.0f;
         public bool Muted { get; set; }
         public bool VSync { get; set; } = true;
+        public ScalingMode Scaling { get; set; } = ScalingMode.Fill;
         /// <summary>Whether to look for a newer release on start.</summary>
         public bool CheckForUpdates { get; set; } = true;
         public WindowPlacement Window { get; set; } = new();
