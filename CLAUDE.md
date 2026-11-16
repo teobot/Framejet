@@ -70,7 +70,7 @@ Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queue
 ### Audio path
 
 - The user never picks the input. It is the WASAPI capture endpoint that shares the video device's container ID.
-- Capture is shared-mode and event-driven. `CaptureIngest` feeds the ring buffer and `DriftController`, which steers the playback rate by up to ±0.5% to hold the buffer at a target: 10 ms, raised 5 ms per underrun to at most 30 ms. Playback is silent until the buffer reaches the target (at start, and again after the ring runs dry while the card sends nothing), and it trims only above 80 ms.
+- Capture is shared-mode and event-driven. `CaptureIngest` feeds the ring buffer and `DriftController`, which steers the playback rate by up to ±0.5% to hold the buffer at a target: 10 ms, raised 5 ms per underrun (not in the first 5 s, nor while the card sends nothing) to at most 30 ms. The level it holds is the lowest post-packet level over the last second, and within ±0.5 ms of the target the rate is exactly 1, because a 10 ms target with 10 ms packets is the ring's floor. Playback is silent until the buffer reaches the target (at start, and again after the ring runs dry while the card sends nothing), and it trims only above 80 ms.
 - Framejet's own variable-rate resampler (`WdlResampler` in sinc mode, always present) and channel mapper come next. The default output can be, for example, 8-channel 96 kHz float.
 - `WasapiOut` (10 ms, shared) then plays to the Windows default output, which it follows live, or to a chosen output.
 

@@ -12,6 +12,20 @@ namespace Framejet.Core.Tests.Audio
         const int Block = 8;
         static int Bytes(double ms) => (int)(Bps * ms / 1000) / Block * Block;
 
+        // The level after a packet can't fall below one packet, so at a 10 ms target the ring is at its floor: any
+        // speed-up there, however small, starves the next read. Small excursions must leave the ratio at exactly 1.
+        [Fact] public void Holds_ratio_at_exactly_one_within_the_band()
+        {
+            var c = new DriftController();
+            Assert.Equal(0.5, DriftController.HoldBand.TotalMilliseconds);
+            for (int i = 0; i < 500; i++) c.Update(10.45, 10);
+            Assert.Equal(1.0, c.Ratio);
+            for (int i = 0; i < 500; i++) c.Update(9.55, 10);
+            Assert.Equal(1.0, c.Ratio);
+            for (int i = 0; i < 500; i++) c.Update(11, 10);
+            Assert.True(c.Ratio > 1.0);
+        }
+
         [Fact] public void Holds_ratio_at_one_on_target()
         {
             var c = new DriftController();

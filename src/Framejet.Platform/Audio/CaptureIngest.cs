@@ -12,17 +12,32 @@ namespace Framejet.Platform.Audio
     /// Takes captured buffers, converts them to float and feeds the playback buffer. A <see cref="DriftController"/>
     /// steers the playback rate to hold the buffer at its target; samples are dropped only after a stall.
     /// Playback reads silence until the buffer reaches the target (prefill), at start and again after a stall.
+    /// <para>
+    /// The level the controller holds at its target is the <b>lowest buffer level right after a packet landed, over
+    /// the last second</b>. With 10 ms packets a 10 ms target therefore means the ring is about empty just before each
+    /// packet, as it was before rate control. A packet that lands early, before playback's read, lifts one sample but
+    /// not the minimum, so it can't speed playback up at that floor and starve the next read.
+    /// </para>
     /// </summary>
     internal sealed class CaptureIngest
     {
         // An underrun raises the target only if capture delivered this recently; a stalled card must not ratchet it.
         static readonly long DeliveringTicks = Stopwatch.Frequency / 10;
 
+        // How far back the controller's level looks for its minimum.
+        static readonly long MinWindowTicks = Stopwatch.Frequency;
+
+        // After the gate opens, both streams settle: the output can ask for a catch-up read larger than anything
+        // buffered. Underruns this soon after are counted in the stats but don't raise the target.
+        public static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(5);
+        static readonly long SettleTicks = (long)(Stopwatch.Frequency * SettleTime.TotalSeconds);
+
         readonly BufferedWaveProvider _buffer;
         readonly WaveFormat _captureFormat;
         readonly DriftController _drift;
         readonly ILog _log;
         readonly UnderrunCountingProvider _output;
+        readonly Func<long> _clock;
         readonly object _statsLock = new object();
         readonly byte[] _drain;
         byte[] _floatScratch = new byte[0]; // touched only on the capture thread
@@ -36,11 +51,18 @@ namespace Framejet.Platform.Audio
         volatile VariableRateResampler _resampler;
         volatile bool _primed;
         long _lastPacket;        // Stopwatch time of the newest packet; written on the capture thread, read on the output thread
+        long _primedAt;          // Stopwatch time the prefill gate last opened; same threads
+        // Post-packet levels of the last MinWindowTicks, oldest first from _winStart; touched only on the capture thread.
+        readonly long[] _winTicks = new long[4096];
+        readonly double[] _winLevels = new double[4096];
+        int _winStart, _winCount;
         int _pendingUnderruns;   // underruns while capture delivered, not yet passed to the controller
         long _lastBlockStamp = long.MinValue; // touched only on the capture thread
 
-        public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, DriftController drift, ILog log)
+        /// <param name="clock">Stopwatch ticks; tests pass a simulated clock.</param>
+        public CaptureIngest(BufferedWaveProvider buffer, WaveFormat captureFormat, DriftController drift, ILog log, Func<long> clock = null)
         {
+            _clock = clock ?? Stopwatch.GetTimestamp;
             _buffer = buffer; _captureFormat = captureFormat; _drift = drift; _log = log ?? NullLog.Instance;
             _drain = new byte[buffer.WaveFormat.BlockAlign * 2048]; // whole frames, so a trim never splits one
             _output = new UnderrunCountingProvider(buffer, IsPrimed, OnUnderrun);
@@ -62,7 +84,7 @@ namespace Framejet.Platform.Audio
 
         public void Process(byte[] data, int count)
         {
-            long arrived = Stopwatch.GetTimestamp();
+            long arrived = _clock();
             if (count == 0) return;
             long previous = Interlocked.Exchange(ref _lastPacket, arrived);
             double elapsedMs = previous == 0 ? 0 : Math.Max(0, (arrived - previous) * 1000.0 / Stopwatch.Frequency);
@@ -105,10 +127,10 @@ namespace Framejet.Platform.Audio
             double ms = _buffer.BufferedBytes * 1000.0 / bf.AverageBytesPerSecond;
             if (trimmed) _log.Info(FormattableString.Invariant($"Audio buffer trimmed from {preTrimMs:0.0} ms to {ms:0.0} ms after a stall"));
 
-            if (!_primed && ms >= _drift.Target.TotalMilliseconds) _primed = true;
+            if (!_primed && ms >= _drift.Target.TotalMilliseconds) { _primed = true; Interlocked.Exchange(ref _primedAt, arrived); }
             if (_primed)
             {
-                double ratio = _drift.Update(ms, elapsedMs);
+                double ratio = _drift.Update(WindowMin(arrived, ms), elapsedMs);
                 var resampler = _resampler;
                 if (resampler != null) resampler.Ratio = ratio;
             }
@@ -127,7 +149,22 @@ namespace Framejet.Platform.Audio
             }
         }
 
-        bool Delivering => Stopwatch.GetTimestamp() - Interlocked.Read(ref _lastPacket) <= DeliveringTicks;
+        /// <summary>Adds this packet's level and returns the lowest of the last second.</summary>
+        double WindowMin(long now, double levelMs)
+        {
+            while (_winCount > 0 && (now - _winTicks[_winStart] > MinWindowTicks || _winCount == _winTicks.Length))
+            {
+                _winStart = (_winStart + 1) % _winTicks.Length;
+                _winCount--;
+            }
+            int slot = (_winStart + _winCount) % _winTicks.Length;
+            _winTicks[slot] = now; _winLevels[slot] = levelMs; _winCount++;
+            double min = double.MaxValue;
+            for (int i = 0; i < _winCount; i++) min = Math.Min(min, _winLevels[(_winStart + i) % _winLevels.Length]);
+            return min;
+        }
+
+        bool Delivering => _clock() - Interlocked.Read(ref _lastPacket) <= DeliveringTicks;
 
         // On the output thread. Once the ring has run dry while the card sends nothing, go back to prefill, so the
         // card's return refills to the target instead of starting at one packet and underrunning.
@@ -141,7 +178,8 @@ namespace Framejet.Platform.Audio
         // On the output thread.
         void OnUnderrun()
         {
-            if (Delivering) Interlocked.Increment(ref _pendingUnderruns);
+            bool settled = _clock() - Interlocked.Read(ref _primedAt) > SettleTicks;
+            if (settled && Delivering) Interlocked.Increment(ref _pendingUnderruns);
         }
 
         /// <summary>

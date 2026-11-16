@@ -9,12 +9,12 @@ namespace Framejet.Platform.Tests.Audio
 {
     public class CaptureIngestTests
     {
-        static CaptureIngest Make(out BufferedWaveProvider buf, out DriftController drift)
+        static CaptureIngest Make(out BufferedWaveProvider buf, out DriftController drift, Func<long> clock = null)
         {
             var fmt = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
             buf = new BufferedWaveProvider(fmt) { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true, ReadFully = true };
             drift = new DriftController();
-            return new CaptureIngest(buf, fmt, drift, NullLog.Instance);
+            return new CaptureIngest(buf, fmt, drift, NullLog.Instance, clock);
         }
 
         static byte[] Chunk(int ms, float value = 0f)
@@ -59,20 +59,27 @@ namespace Framejet.Platform.Tests.Audio
         }
 
         [Fact]
-        public void Underrun_raises_the_target_only_while_capture_delivers()
+        public void Underrun_raises_the_target_only_after_settling_and_while_capture_delivers()
         {
-            var ingest = Make(out _, out var drift);
+            long now = 1, ms = System.Diagnostics.Stopwatch.Frequency / 1000;
+            var ingest = Make(out var buf, out var drift, () => now);
             var read = new byte[48 * 40 * 8];
             ingest.Process(Chunk(10), 48 * 10 * 8);
-            ingest.Output.Read(read, 0, 48 * 20 * 8); // wants 20 ms, has 10
+            ingest.Output.Read(read, 0, 48 * 20 * 8); // wants 20 ms, has 10: a start-up catch-up read
             Assert.Equal(1, ingest.Underruns);
-            ingest.Process(Chunk(10), 48 * 10 * 8);
+            now += 10 * ms; ingest.Process(Chunk(10), 48 * 10 * 8);
+            Assert.Equal(10, drift.Target.TotalMilliseconds);
+
+            for (int i = 0; i < 510; i++) { now += 10 * ms; buf.ClearBuffer(); ingest.Process(Chunk(10), 48 * 10 * 8); } // past the settle time
+            ingest.Output.Read(read, 0, 48 * 20 * 8);
+            Assert.Equal(2, ingest.Underruns);
+            now += 10 * ms; ingest.Process(Chunk(10), 48 * 10 * 8);
             Assert.Equal(15, drift.Target.TotalMilliseconds);
 
-            System.Threading.Thread.Sleep(150); // the card goes quiet
+            now += 150 * ms; // the card goes quiet
             ingest.Output.Read(read, 0, read.Length);
-            Assert.Equal(2, ingest.Underruns);
-            ingest.Process(Chunk(10), 48 * 10 * 8);
+            Assert.Equal(3, ingest.Underruns);
+            now += 10 * ms; ingest.Process(Chunk(10), 48 * 10 * 8);
             Assert.Equal(15, drift.Target.TotalMilliseconds);
         }
 
@@ -101,6 +108,55 @@ namespace Framejet.Platform.Tests.Audio
             ingest.Process(Chunk(10, 0.5f), 48 * 10 * 8);
             Assert.Equal(10, drift.Target.TotalMilliseconds);
             Assert.Equal(underruns, ingest.Underruns);
+        }
+
+        /// <summary>
+        /// Capture and playback in lockstep on one engine clock, as with a card and an output on the same Windows
+        /// audio engine: each 10 ms step a packet lands and playback reads 10 ms through the real chain. Every
+        /// <paramref name="jitterEvery"/> steps a packet arrives before the read instead of after it.
+        /// </summary>
+        static (double MeanMs, double FinalMs, int Underruns, double TargetMs) Lockstep(int standingPackets, int seconds, int jitterEvery)
+        {
+            long now = 1;
+            var fmt = WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
+            var buf = new BufferedWaveProvider(fmt) { BufferDuration = TimeSpan.FromMilliseconds(500), DiscardOnBufferOverflow = true, ReadFully = true };
+            var drift = new DriftController();
+            var ingest = new CaptureIngest(buf, fmt, drift, NullLog.Instance, () => now);
+            var chain = PlaythroughChain.ToWaveProvider(PlaythroughChain.Build(ingest.Output, fmt, out _, out var resampler), fmt);
+            ingest.Resampler = resampler;
+            long tick = System.Diagnostics.Stopwatch.Frequency / 100;
+            var packet = Chunk(10, 0.25f); var read = new byte[48 * 10 * 8];
+            chain.Read(read, 0, read.Length); // playback starts before capture, as in the backend: a prefill read
+            for (int i = 0; i < standingPackets; i++) ingest.Process(packet, packet.Length);
+            double sum = 0; int n = 0, steps = seconds * 100;
+            for (int i = 0; i < steps; i++)
+            {
+                now += tick;
+                bool early = jitterEvery > 0 && i % jitterEvery == 0;
+                if (early) ingest.Process(packet, packet.Length);
+                chain.Read(read, 0, read.Length);
+                if (!early) ingest.Process(packet, packet.Length);
+                if (i >= steps / 2) { sum += ingest.Snapshot(false).BufferedMs; n++; }
+            }
+            return (sum / n, LevelMs(buf), ingest.Underruns, drift.Target.TotalMilliseconds);
+        }
+
+        [Fact]
+        public void Locked_clocks_hold_one_packet_without_underruns()
+        {
+            var r = Lockstep(standingPackets: 1, seconds: 60, jitterEvery: 50);
+            Assert.Equal(0, r.Underruns);
+            Assert.Equal(10, r.TargetMs);
+            Assert.True(r.MeanMs <= 10.5, $"mean level {r.MeanMs:0.00} ms");
+        }
+
+        [Fact]
+        public void A_standing_excess_drains_into_the_band_without_underruns()
+        {
+            var r = Lockstep(standingPackets: 2, seconds: 40, jitterEvery: 50); // starts 10 ms above the target
+            Assert.Equal(0, r.Underruns);
+            Assert.Equal(10, r.TargetMs);
+            Assert.InRange(r.FinalMs, 10.0, 10.0 + DriftController.HoldBand.TotalMilliseconds + 0.25);
         }
 
         [Fact]
