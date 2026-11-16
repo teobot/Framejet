@@ -66,9 +66,11 @@ Non-goals
 - **Capture:** DirectShowLib 1.0.0. Graph: capture filter → Smart Tee (inserted by the graph builder) → Sample Grabber (BufferCB) → Null Renderer. The graph has **no reference clock** (`IMediaFilter.SetSyncSource(null)`), so frames are delivered the moment they arrive. The grabber asks for the mode's raw format (NV12 or YUY2). For MJPG modes it asks for RGB32 and DirectShow inserts the MJPEG Decompressor.
 - **Drawing:** Direct3D 11 through SharpDX 4.2.0 **(Claude's call: unmaintained since 2019, but proven on the reference PC with net48, and Direct3D 11 itself is frozen)**. A render thread takes only the **newest** frame; an older frame not yet drawn is dropped and counted. It uploads the frame to dynamic textures (NV12 as R8 + R8G8 planes, YUY2 as half-width RGBA, RGB32 as BGRA), converts YUV to RGB in a pixel shader, scales into a letterboxed viewport and presents. Framejet itself queues no frames.
 - **Handoff (Claude's call):** keep the spike's two copies (the spike was a throwaway Direct3D 11 prototype, measured in section 8): BufferCB copies into a managed buffer, then the render thread copies into the mapped texture. That took 1.27 ms p95 from arrival to Present at 1440p NV12, so it's fast enough. Don't add threading complexity to save a copy.
-- **Swap chain:** flip model (FLIP_DISCARD), 2 buffers, maximum frame latency 1.
-- **V-Sync On (default):** `Present(1)`. No tearing; each frame waits for the next refresh.
-- **V-Sync Off:** the swap chain is created with ALLOW_TEARING and presents with `Present(0, ALLOW_TEARING)`. Frames show instantly but tear, unless VRR is on, in which case they are instant and tear-free.
+- **Swap chain:** flip model (FLIP_DISCARD), 2 buffers, maximum frame latency 1, created with the frame-latency waitable flag. The waitable object signals when the previously queued frame leaves the display queue.
+- **V-Sync On (default; the owner: latency over smoothness, with an opt-out; the 4 ms wait is Claude's call from measurement):** before each present, wait up to 4 ms for the waitable object, then `Present(1)`. No tearing. If the queue is still busy after 4 ms, skip the frame and count it as dropped. At 60 Hz a frame that misses the display's ~4 ms latch deadline shows a refresh late, and every later frame queues behind it; skipping one frame clears that backlog. Waiting first keeps the picture at 60 fps instead of juddering at 30.
+- **Never skip frames (V-Sync On only; the owner's opt-out):** wait for the object (bounded at 1 s) and always present. Smoother, but at 60 Hz the backlog stays.
+- **Never present without a slot (Claude's call, after review):** a wait that times out skips the frame in every mode: 4 ms by default, 1 s for never-skip and V-Sync Off. A failed Present keeps its slot for the next frame. The object is a counting semaphore with no cap, so presenting without a slot would lift the latency limit for the rest of the stream. If no slot comes for 1 s while frames keep arriving, the swap chain is recreated (which resets the object) and it's logged. The 1 s recreate is Claude's call.
+- **V-Sync Off:** the swap chain is created with ALLOW_TEARING and presents with `Present(0, ALLOW_TEARING)` after the same bounded wait (1 s). Frames show instantly but tear, unless VRR is on, in which case they are instant and tear-free.
 - **Colour (Claude's call):** BT.709 limited range for modes of 720 lines or more, BT.601 below.
 - **Scaling (Claude's call):** sharper than plain bilinear when upscaling (for example 1080p on the 1440p screen). The exact filter is left to the builder.
 - **GPU device lost** (driver update or reset): recreate the Direct3D device and swap chain without restarting capture **(Claude's call)**.
@@ -109,7 +111,7 @@ Non-goals
 - **Scale (Claude's call, approved by the owner after a maximized window looked blurry):** the status ends with how the letterboxed picture is drawn: "1:1" when pixel for pixel, otherwise its size as a whole percentage of the mode's. 1440p in a maximized window on the 1440p screen is "95%"; 1080p fullscreen there is "133%". A scaled picture never reads "100%": 99.96% shows as "99%". There is no scale with no area to draw on.
 - **How it's built (Claude's call):** the toolbar is its own borderless, owned, layered window positioned over the bottom of the video, because flip-model Direct3D content can cover ordinary child controls placed on top of it. Verify early that dropdowns and the fade work, and that the picture returns to direct scanout once the toolbar hides.
 - **Fullscreen:** picture only, with no toolbar. The cursor hides after 2 s idle. F11, Alt+Enter or double-click toggles; Esc leaves fullscreen; M mutes. The right-click menu works everywhere. Shortcuts work whichever Framejet window has focus.
-- **Right-click menu:** Framejet and its version, such as "Framejet 1.1.0" (not clickable; a release stamps the version from its tag, and any other build says "Framejet (dev build)") · while video runs, the status without warnings, such as "1440p · 59.9 fps · 1:1" (not clickable; the toolbar never shows in fullscreen, so this is where the scale is read there) · **Update to …** (only when a newer release is out, 4.11) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
+- **Right-click menu:** Framejet and its version, such as "Framejet 1.1.0" (not clickable; a release stamps the version from its tag, and any other build says "Framejet (dev build)") · while video runs, the status without warnings, such as "1440p · 59.9 fps · 1:1" (not clickable; the toolbar never shows in fullscreen, so this is where the scale is read there) · **Update to …** (only when a newer release is out, 4.11) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · ✓ Never skip frames (greyed out while V-Sync is off) · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
 - **Messages:**
   - With no picture, centred in the picture area: "Waiting for Razer Ripsaw X… plug it in and it starts by itself", or "Couldn't start Razer Ripsaw X — retrying".
   - In the status text: "No picture — is the PS5 on?" after about 3 s of frames that are almost all darker than video black (at least 95% of sampled luma at or below 10), which is what the Ripsaw sends with no HDMI signal: black with a small logo. Ordinary black at video black (Y=16) during play does not count **(Claude's call, from the spike and the owner's PS5-off capture)**; "No audio from the card"; audio device errors, as "Audio error: {message} — retrying" while Framejet tries the audio again every 3 s by itself.
@@ -124,7 +126,7 @@ Non-goals
 ### 4.8 Settings (owner)
 - `%AppData%\Framejet\settings.ini`, key=value, tolerant of junk lines and unknown keys. Written atomically **(Claude's call)**.
 - On first run, if `%AppData%\Framejet` doesn't exist and `%AppData%\PlayThrough\settings.ini` (the app's earlier name) does, that file is copied across, and the old folder is never changed.
-- Remembers: video device (path and name), mode key, audio output, audio input override, volume, mute, V-Sync, window bounds and maximised state, and whether it was fullscreen and on which screen.
+- Remembers: video device (path and name), mode key, audio output, audio input override, volume, mute, V-Sync, never skip frames, window bounds and maximised state, and whether it was fullscreen and on which screen.
 - Restore the window position only if it lands on a connected screen; otherwise centre on the primary. Reopen fullscreen if it was closed fullscreen and that screen is still connected **(Claude's call)**.
 - Keep a small log of device events and errors at `%AppData%\Framejet\Framejet.log`, the last two sessions (`Framejet.log` and `Framejet.old.log`) **(Claude's call)**.
 
@@ -133,7 +135,8 @@ Non-goals
 - devices found, and why each was chosen or skipped
 - the negotiated mode
 - frames arrived, drawn and dropped, the measured fps, and the picture's scale ("1:1" or a percentage, as in 4.6)
-- arrival-to-screen time from DXGI frame statistics
+- arrival-to-screen time from DXGI frame statistics, split into arrival to Present (Framejet's own work, up to the start of the queue wait), the queue wait, and Present to screen
+- which frame-skipping mode is on
 - presentation mode (direct/overlay or composed)
 - picture brightness mean and variation (the frame itself is never saved)
 - audio bytes, peak and buffer level
@@ -173,16 +176,23 @@ Some of these names are the draft's; the Architecture section of `CLAUDE.md` has
 8. V-Sync On never tears; V-Sync Off never stalls.
 9. **No added delay (Claude's call, reworded after review).** Measured at the default mode with V-Sync On, on any screen:
    - our code: frame arrival → Present, p95 ≤ 2.5 ms.
-   - the display: Present → on screen, mean ≤ half a refresh + 1.5 ms and p95 ≤ one refresh + 1.5 ms. In other words, each frame goes out at the first refresh after Present, and none waits an extra refresh.
+   - the display: Present → on screen, mean ≤ half a refresh + 5.5 ms (Claude's call; the owner can object) and p95 ≤ one refresh + 1.5 ms. In other words, each frame goes out at the first refresh after Present, and none waits an extra refresh.
+   - The 5.5 ms is the measured ~4 ms latch deadline plus the old bar's 1.5 ms slack. With a deadline D, the expected mean is half a refresh + D. A first try at half a refresh + 4 ms missed by 0.1 ms in 2 of 3 runs.
+   - The bars are 13.8 ms mean and 18.2 ms p95 at 60 Hz, 8.5 ms and 7.6 ms at 165 Hz. The old ~30 ms backlog still fails by a wide margin.
+   - The queue wait is reported separately and isn't part of the arrival → Present bar.
 
-   At 165 Hz that means a mean of 4.5 ms or less and a p95 of 7.6 ms or less. The spike met both at the 1440p60 NV12 default:
+   Under the old bar, at 165 Hz the limits were a mean of 4.5 ms and a p95 of 7.6 ms. The spike met both at the 1440p60 NV12 default:
    - arrival → Present: 0.94 ms mean, 1.27 ms p95
    - Present → screen: 3.91 ms mean, 6.83 ms p95
    - end to end: 4.85 ms mean, 7.73 ms p95
 
    The bar measures whether Framejet adds delay, not when the next refresh happens to land. If a mode ever misses it by a fraction of a millisecond, investigate, but keep the 1440p default: the owner approved it, and resolution is one of the anti-goals too.
 
-   **Known limitation:** on a 60 Hz screen with V-Sync On, a ~60 fps source often queues behind the previous frame, adding ~30 ms. 144 and 165 Hz screens are unaffected. The fix is parked.
+   **Measured at 60 Hz, fullscreen, default (3 runs, all pass):** Present → screen 11.6–13.2 ms mean, 16.6–16.9 ms p95; arrival → Present p95 under 0.9 ms; queue wait 0.05–0.53 ms mean; 1–5% of frames skipped (0.9%, 2.1%, 4.7%). Before, a run was either ~14 or ~30+ ms. With Never skip frames the backlog stays: 16.6 ms mean, arrival → Present p95 13.3 ms, which fails the bar. That is the trade. At 165 Hz: 4.2 / 6.9 ms, nothing skipped. Windowed at 60 Hz is composed by the desktop and isn't evidence.
+
+   **Open, not fixed:**
+   - **Stall after a skip.** In a few runs a skip was followed by a display stall of 33 ms, once ~120 ms, about once per 30 s at 60 Hz. The flip really didn't retire. Adaptive sync on that monitor is suspected and unconfirmed; turning it off for the monitor would confirm or rule it out. Never skip frames avoids it.
+   - **144 Hz p95.** In 15 s runs Present → screen p95 is ~9.8–10.4 ms against the 8.44 ms bar, on the original presenter too. The earlier 4 s pass was luck. The frame statistics also undercounted that screen's refresh (108 Hz reported), so this may be partly the measurement.
 
 ## 7. Testing
 - When the card isn't there, a webcam stands in for video and a microphone **at volume 0** (no feedback) for audio. Both are set in `tests/Framejet.Platform.Tests/hardware.local.ini`, a git-ignored file started from `hardware.example.ini`. Automated audio tests always run at volume 0 or muted.
@@ -211,6 +221,14 @@ Some of these names are the draft's; the Architecture section of `CLAUDE.md` has
 - Costura.Fody fails on long paths, and the embedding approach in 4.10 works.
 - Microsoft.NETFramework.ReferenceAssemblies 1.0.3 is needed for net48 with the .NET 5 SDK.
 - A DPI-aware manifest is needed so the renderer and WinForms agree on pixel sizes.
+
+**From the 2026-11-16 60 Hz trace**
+- The card sends 59.940 fps and the screen refreshes at 60.000 Hz, so the two beat about every 16.7 s.
+- The display has a latch deadline of about 3–4 ms at 60 Hz: a frame presented later than that before a refresh shows at the next one. A missed frame queues, and every later frame queues behind it until the beat leaves a refresh with nothing new.
+- `Present(0)` without tearing doesn't replace a queued frame in direct scanout. It blocks like `Present(1)`.
+- Frame statistics lag in composed mode, so they can't drive skipping.
+- The frame-latency waitable object is a counting semaphore with no cap.
+- At 144 and 165 Hz a refresh with nothing new follows every frame, so the queue drains at once.
 
 **From the 2026-11-09 Direct3D 11 spike**
 
