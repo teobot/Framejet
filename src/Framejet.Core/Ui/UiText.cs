@@ -34,5 +34,8 @@ namespace Framejet.Core.Ui
         public static string OutputGone(string name) => name + " is gone — using " + DefaultOutput;
         public static string AudioError(string message) => "Audio error: " + message;
         public static string AudioRetrying(string message) => AudioError(message) + " — retrying";
+
+        public static string UpdateTo(string version) => "Update to " + version;
+        public static string UpdateTooltip(string version) => "Open the Framejet " + version + " release page";
     }
 }

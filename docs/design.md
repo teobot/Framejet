@@ -105,11 +105,11 @@ Non-goals
 ### 4.6 Window and controls (the owner picked a layout with the toolbar floating over the picture)
 - Dark theme. In a window, the picture fills the client area, letterboxed.
 - The **toolbar floats over the bottom of the picture** and fades out 2 s after the mouse stops moving. Moving the mouse over the window brings it back. It stays up while hovered or while a dropdown or menu is open. A new warning brings it up for 5 s **(Claude's call)**.
-- Toolbar, left to right: video device ▾ · mode ▾ · rescan ⟳ | audio output ▾ · mute · volume | V-Sync toggle · fullscreen | status text (e.g. "1440p · 59.9 fps · 1:1", or a warning).
+- Toolbar, left to right: video device ▾ · mode ▾ · rescan ⟳ | audio output ▾ · mute · volume | V-Sync toggle · fullscreen | status text (e.g. "1440p · 59.9 fps · 1:1", or a warning) | **Update to …** pill, only when a newer release is out (4.11).
 - **Scale (Claude's call, approved by the owner after a maximized window looked blurry):** the status ends with how the letterboxed picture is drawn: "1:1" when pixel for pixel, otherwise its size as a whole percentage of the mode's. 1440p in a maximized window on the 1440p screen is "95%"; 1080p fullscreen there is "133%". A scaled picture never reads "100%": 99.96% shows as "99%". There is no scale with no area to draw on.
 - **How it's built (Claude's call):** the toolbar is its own borderless, owned, layered window positioned over the bottom of the video, because flip-model Direct3D content can cover ordinary child controls placed on top of it. Verify early that dropdowns and the fade work, and that the picture returns to direct scanout once the toolbar hides.
 - **Fullscreen:** picture only, with no toolbar. The cursor hides after 2 s idle. F11, Alt+Enter or double-click toggles; Esc leaves fullscreen; M mutes. The right-click menu works everywhere. Shortcuts work whichever Framejet window has focus.
-- **Right-click menu:** Framejet and its version, such as "Framejet 1.1.0" (not clickable; a release stamps the version from its tag, and any other build says "Framejet (dev build)") · while video runs, the status without warnings, such as "1440p · 59.9 fps · 1:1" (not clickable; the toolbar never shows in fullscreen, so this is where the scale is read there) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
+- **Right-click menu:** Framejet and its version, such as "Framejet 1.1.0" (not clickable; a release stamps the version from its tag, and any other build says "Framejet (dev build)") · while video runs, the status without warnings, such as "1440p · 59.9 fps · 1:1" (not clickable; the toolbar never shows in fullscreen, so this is where the scale is read there) · **Update to …** (only when a newer release is out, 4.11) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
 - **Messages:**
   - With no picture, centred in the picture area: "Waiting for Razer Ripsaw X… plug it in and it starts by itself", or "Couldn't start Razer Ripsaw X — retrying".
   - In the status text: "No picture — is the PS5 on?" after about 3 s of frames that are almost all darker than video black (at least 95% of sampled luma at or below 10), which is what the Ripsaw sends with no HDMI signal: black with a small logo. Ordinary black at video black (Y=16) during play does not count **(Claude's call, from the spike and the owner's PS5-off capture)**; "No audio from the card"; audio device errors, as "Audio error: {message} — retrying" while Framejet tries the audio again every 3 s by itself.
@@ -144,6 +144,10 @@ Non-goals
 - `AppDomain.AssemblyResolve` is hooked in Program's static constructor, and `Main` calls a `[MethodImpl(MethodImplOptions.NoInlining)] Run()`.
 - No Costura.Fody: it fails on long paths.
 - Shaders may be precompiled at build time to drop the runtime compiler (builder's call).
+
+### 4.11 Update notice (owner: for anyone who downloaded it; the pill only opens the release page)
+- About 10 s after it starts, Framejet asks GitHub for the latest release. If that is newer than the running version, an **Update to …** pill appears at the right end of the toolbar and the same item in the right-click menu. Either opens the release page in the browser; Framejet never downloads or installs anything. Full detail is in `docs/superpowers/specs/2026-11-16-update-pill-design.md`.
+- **Claude's calls:** everything else in that spec. The setting key is `update.check` (`update.check=false` in `settings.ini` turns the check off), and builds that are not stamped with a version are `0.0.0-dev` and never check.
 
 ## 5. Architecture (the owner's draft, updated for Direct3D 11)
 Some of these names are the draft's; the Architecture section of `CLAUDE.md` has the code's current names.

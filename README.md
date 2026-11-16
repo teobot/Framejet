@@ -40,6 +40,8 @@ Framejet.exe includes open-source libraries, among them DirectShowLib under the 
 
 If your browser says Framejet.exe isn't commonly downloaded, choose **Keep**. The exe isn't code-signed, so the first time you open it, Windows may say "Windows protected your PC". Click **More info**, then **Run anyway**.
 
+Framejet asks GitHub for the latest release about 10 seconds after it starts, and if there's a newer one, an **Update to …** button appears in the toolbar and the right-click menu. It sends nothing about you or your PC apart from the Framejet version. To turn it off, close Framejet and set `update.check=false` in `%AppData%\Framejet\settings.ini`.
+
 ## Using it
 
 | Shortcut | What it does |

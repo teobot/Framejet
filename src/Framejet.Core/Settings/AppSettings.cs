@@ -30,6 +30,8 @@ namespace Framejet.Core.Settings
         public float Volume { get; set; } = 1.0f;
         public bool Muted { get; set; }
         public bool VSync { get; set; } = true;
+        /// <summary>Whether to look for a newer release on start.</summary>
+        public bool CheckForUpdates { get; set; } = true;
         public WindowPlacement Window { get; set; } = new();
     }
 }

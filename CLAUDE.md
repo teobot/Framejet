@@ -17,7 +17,7 @@ dotnet test tests\Framejet.Platform.Tests     # real devices: capture card, webc
 dotnet test tests\Framejet.Core.Tests --filter "FullyQualifiedName~VideoSessionTests"
 ```
 
-- **Platform tests** are `[SkippableFact, Trait("Category", "Hardware")]`. They skip when a device isn't connected, run serially (test parallelization is disabled), and open real devices and windows. They read this PC's devices from `tests\Framejet.Platform.Tests\hardware.local.ini` (git-ignored; start from `hardware.example.ini`). A test whose device isn't set there skips.
+- **Platform tests** are `[SkippableFact, Trait("Category", "Hardware")]`. They skip when a device isn't connected, run serially (test parallelization is disabled), and open real devices and windows. They read this PC's devices from `tests\Framejet.Platform.Tests\hardware.local.ini` (git-ignored; start from `hardware.example.ini`). A test whose device isn't set there skips. `LatestReleaseTests` is `Category=Network`: it calls the live GitHub API and skips when offline.
 - **Self-test** is the end-to-end lag gate. Run `Framejet.exe --selftest report.txt --settings <folder>\settings.ini --seconds 4`.
   - It runs for about 20 s, windowed and then fullscreen. It never saves settings, and it writes its log next to the settings file.
   - Success is exit code 0 and `result: PASS`.
@@ -43,7 +43,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 
 - **Framejet.Core** uses no Windows media APIs.
   - The state machines `Video/VideoSession` and `Audio/AudioSession` drive abstract `IVideoBackend`/`IAudioBackend`, using an `IScheduler` (UI-thread timers) and an `IDispatcher`.
-  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `LatencyTrimmer`, `DelayCheck`, `ToolbarAutoHide`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
+  - Policy lives in small pure types: `DeviceRules`, `ModeCatalog`, `PlacementRules`, `GraphEventPolicy`, `NoSignalDetector`, `LatencyTrimmer`, `DelayCheck`, `ToolbarAutoHide`, `UpdateCheck`, `AppVersion`. `SettingsCarryOver` keeps its decision in the pure `ShouldCopy`; its `Run` does the file work.
   - Status and warning copy lives in `Ui/UiText`, which the spec quotes verbatim.
   - Tests use fakes, including `FakeScheduler` and the fake backends.
 - **Framejet.Platform** holds the real backends:
@@ -93,6 +93,7 @@ Known limitation: on a 60 Hz screen with V-Sync On, a ~60 fps source often queue
 
 - Settings go in `%AppData%\Framejet\settings.ini` as key=value lines. Writes are atomic, debounced by 500 ms and flushed on close.
 - On first run, `SettingsCarryOver` copies `settings.ini` from `%AppData%\PlayThrough` (the app's earlier name) if `%AppData%\Framejet` doesn't exist yet. There is no copy with `--settings`.
+- Unstamped builds are `0.0.0-dev` and never check for updates.
 - Logs go in `Framejet.log`, with the previous session kept as `Framejet.old.log`.
 - Only an explicit mode pick saves a mode; the automatic default follows the screen the window is on.
 

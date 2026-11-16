@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
 using Framejet.Core.Audio;
 using Framejet.Core.Devices;
 using Framejet.Core.Ui;
+using Framejet.Core.Updates;
 using Framejet.Core.Video;
 
 namespace Framejet
@@ -39,7 +41,7 @@ namespace Framejet
         readonly Stopwatch _fadeClock = new Stopwatch();
         readonly Font _glyphFont = new Font("Segoe UI Symbol", 10f);
         readonly ComboBox _devices, _modes, _outputs;
-        readonly Button _rescan, _mute, _vsync, _fullscreen;
+        readonly Button _rescan, _mute, _vsync, _fullscreen, _update;
         readonly DarkSlider _volume;
         readonly Panel _separatorA, _separatorB;
         readonly Label _status;
@@ -51,6 +53,7 @@ namespace Framejet
         long _lastFadeMs;
         int _openDropDowns;
         bool _hover, _refreshing, _held;
+        bool _showUpdate; // not _update.Visible: that is false whenever the toolbar window is hidden
 
         public ToolbarWindow(MainForm owner)
         {
@@ -85,6 +88,15 @@ namespace Framejet
             _items = new List<Control> { _devices, _modes, _rescan, _separatorA, _outputs, _mute, _volume, _separatorB, _vsync, _fullscreen, _status };
             StyleButton(_vsync, false);
             Controls.AddRange(_items.ToArray());
+            // The update pill is not in _items: it sits at the right end and only takes room from the status text.
+            _update = new Button { Visible = false, TabStop = false, UseVisualStyleBackColor = false, FlatStyle = FlatStyle.Flat };
+            StyleButton(_update, true);
+            _update.FlatAppearance.BorderSize = 0;
+            _update.FlatAppearance.MouseOverBackColor = DarkTheme.AccentBorder;
+            _update.FlatAppearance.MouseDownBackColor = DarkTheme.AccentBorder;
+            _update.SizeChanged += (s, e) => RoundPill();
+            Controls.Add(_update);
+            _update.BringToFront(); // above the status label, which can reach it
 
             _tips.SetToolTip(_rescan, "Rescan devices");
             _tips.SetToolTip(_mute, "Mute (M)");
@@ -104,6 +116,7 @@ namespace Framejet
             _volume.ValueChanged += (s, e) => { if (!_refreshing) _owner.Audio?.SetVolume(_volume.Value); };
             _vsync.Click += (s, e) => { _owner.ToggleVSync(); ApplyToggles(); };
             _fullscreen.Click += (s, e) => _owner.ToggleFullscreen();
+            _update.Click += (s, e) => _owner.OpenUpdatePage();
 
             HookHover(this);
             // Spec 4.6: the right-click menu works everywhere, so the toolbar and every control on it show the window's
@@ -192,6 +205,38 @@ namespace Framejet
             if (Visible) Hide();
             _hover = false;
             UpdateHeld();
+        }
+
+        /// <summary>Shows the update pill for <paramref name="offer"/>, or hides it when the offer is null.</summary>
+        public void SetUpdate(UpdateOffer offer)
+        {
+            if (IsDisposed) return;
+            _showUpdate = offer != null;
+            if (offer == null) _update.Visible = false;
+            else
+            {
+                _update.Text = UiText.UpdateTo(offer.Version);
+                _tips.SetToolTip(_update, UiText.UpdateTooltip(offer.Version));
+                _update.Visible = true;
+            }
+            LayoutControls();
+        }
+
+        /// <summary>Fully rounded ends.</summary>
+        void RoundPill()
+        {
+            int w = _update.Width, h = _update.Height;
+            if (w <= 0 || h <= 0) return;
+            using (var path = new GraphicsPath())
+            {
+                int d = Math.Min(h, w);
+                path.AddArc(0, 0, d, d, 90, 180);
+                path.AddArc(w - d, 0, d, d, 270, 180);
+                path.CloseFigure();
+                var old = _update.Region;
+                _update.Region = new Region(path);
+                old?.Dispose();
+            }
         }
 
         /// <summary>The text on the right: the mode, the frame rate and the warnings.</summary>
@@ -399,7 +444,19 @@ namespace Framejet
                 else c.SetBounds(x, top, w, height);
                 x += w + gap;
             }
-            _status.SetBounds(x, top, Math.Max(0, ClientSize.Width - x - Px(PadPx)), height);
+            int right = ClientSize.Width - Px(PadPx);
+            if (_showUpdate)
+            {
+                int pillWidth = TextRenderer.MeasureText(_update.Text, _update.Font).Width + Px(20);
+                if (right - pillWidth - gap < x) _update.Visible = false;
+                else
+                {
+                    _update.Visible = true;
+                    _update.SetBounds(right - pillWidth, top, pillWidth, height);
+                    right -= pillWidth + gap;
+                }
+            }
+            _status.SetBounds(x, top, Math.Max(0, right - x), height);
         }
 
         // ---- holding ----
@@ -508,6 +565,7 @@ namespace Framejet
                 _fade.Stop();
                 _fade.Dispose();
                 _tips.Dispose();
+                _update.Region?.Dispose();
             }
             base.Dispose(disposing);
             if (disposing) _glyphFont.Dispose();
