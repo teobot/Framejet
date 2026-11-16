@@ -61,7 +61,10 @@ Approach 1 failed its measuring gate. A per-frame trace on the 60 Hz screen foun
   - A frame within 4 ms of the refresh it missed would land a refresh late anyway, whether it waits or skips. Waiting keeps the picture at 60 fps instead of juddering at 30 fps; skipping on every busy frame did judder (**Claude's call, from measurement**).
 - **V-Sync On, never skip:** wait (bounded at 1 s), then `Present(1)`. This is the old behaviour.
 - **V-Sync Off:** wait (bounded at 1 s), then present as before (`Present(0, ALLOW_TEARING)` when supported).
-- If a 1 s wait ever times out, present anyway.
+- **Never present without a slot (Claude's call, after review).**
+  - A wait that times out skips the frame in every mode. A failed Present keeps its slot for the next frame. That way every present is matched by exactly one slot taken from the waitable object.
+  - The object is a counting semaphore with no cap (measured): presenting without a slot would leave a surplus that lifts the latency limit for the rest of the stream.
+  - If no slot comes for 1 s while frames keep arriving, Framejet recreates the swap chain, which resets the object, and logs it.
 
 **Measured with a throwaway version, 60 Hz fullscreen, 15 s runs.**
 - Arrival → screen: 12.1–13.2 ms mean, 18.9–20.7 p95. Before, a run was either ~14 or ~30+ ms.
