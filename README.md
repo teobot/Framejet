@@ -79,7 +79,7 @@ Framejet can't see what the console sends. If the PS5 outputs less than the mode
 
 ### Late picture on a 60 Hz screen
 
-On a 60 Hz screen a frame that arrives just too late for a refresh shows one refresh later, and the frames behind it follow. With V-Sync on, Framejet clears that by skipping an occasional frame (about 1 to 5%), so the delay stays near half a refresh. If you'd rather have every frame and accept the extra delay, tick **Never skip frames** in the right-click menu. Turning V-Sync off sends frames at once, though the picture can tear. Screens at 144 and 165 Hz don't skip.
+On a 60 Hz screen a frame that arrives just too late for a refresh shows one refresh later, and the frames behind it follow. With V-Sync on, Framejet clears that by skipping an occasional frame (about 1 to 5%), so the delay stays at about half a refresh plus a few ms (12 to 13 ms at 60 Hz). Now and then a skip causes a brief hitch, usually one extra refresh. To avoid that and keep every frame, at the cost of up to a refresh of extra delay, tick **Never skip frames** in the right-click menu. Turning V-Sync off sends frames at once, though the picture can tear. Screens at 144 and 165 Hz don't skip.
 
 ### Logs
 

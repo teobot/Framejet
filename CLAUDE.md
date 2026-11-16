@@ -61,7 +61,7 @@ There are three projects, layered so that the logic can be tested without hardwa
 4. Pixel shaders convert NV12/YUY2/UYVY/RGB32 with BT.709/601 limited range, and Catmull-Rom handles upscaling.
 5. Frames go out on a FLIP_DISCARD swap chain with 2 buffers, maximum frame latency 1, tearing allowed and a frame-latency waitable object. Before each present the render thread takes one slot from the object, waiting 4 ms by default (1 s with Never skip frames or V-Sync Off). V-Sync On is then `Present(1)`; V-Sync Off is `Present(0, ALLOW_TEARING)`.
    - A timed-out wait skips the frame in every mode, and a failed Present keeps its slot. Never present without a slot: the object is an uncapped semaphore, so a surplus lifts the latency limit for good.
-   - 1 s with no slot while frames keep arriving recreates the swap chain, which resets the object.
+   - 1 s with no slot while frames keep arriving recreates the device and swap chain; the new swap chain resets the object.
 
 Measurement notes:
 - `MeasureLatency` is on only in the self-test and hardware tests. It makes the render loop wake every 1 ms to sample DXGI frame statistics.

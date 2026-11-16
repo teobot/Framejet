@@ -68,8 +68,8 @@ Non-goals
 - **Handoff (Claude's call):** keep the spike's two copies (the spike was a throwaway Direct3D 11 prototype, measured in section 8): BufferCB copies into a managed buffer, then the render thread copies into the mapped texture. That took 1.27 ms p95 from arrival to Present at 1440p NV12, so it's fast enough. Don't add threading complexity to save a copy.
 - **Swap chain:** flip model (FLIP_DISCARD), 2 buffers, maximum frame latency 1, created with the frame-latency waitable flag. The waitable object signals when the previously queued frame leaves the display queue.
 - **V-Sync On (default; the owner: latency over smoothness, with an opt-out; the 4 ms wait is Claude's call from measurement):** before each present, wait up to 4 ms for the waitable object, then `Present(1)`. No tearing. If the queue is still busy after 4 ms, skip the frame and count it as dropped. At 60 Hz a frame that misses the display's ~4 ms latch deadline shows a refresh late, and every later frame queues behind it; skipping one frame clears that backlog. Waiting first keeps the picture at 60 fps instead of juddering at 30.
-- **Never skip frames (V-Sync On only; the owner's opt-out):** wait for the object (bounded at 1 s) and always present. Smoother, but at 60 Hz the backlog stays.
-- **Never present without a slot (Claude's call, after review):** a wait that times out skips the frame in every mode: 4 ms by default, 1 s for never-skip and V-Sync Off. A failed Present keeps its slot for the next frame. The object is a counting semaphore with no cap, so presenting without a slot would lift the latency limit for the rest of the stream. If no slot comes for 1 s while frames keep arriving, the swap chain is recreated (which resets the object) and it's logged. The 1 s recreate is Claude's call.
+- **Never skip frames (V-Sync On only; the owner's opt-out):** wait up to 1 s for the object, then `Present(1)`. A frame is skipped only if that wait times out (next bullet). Smoother, but at 60 Hz the backlog stays.
+- **Never present without a slot (Claude's call, after review):** a wait that times out skips the frame in every mode: 4 ms by default, 1 s for never-skip and V-Sync Off. A failed Present keeps its slot for the next frame. The object is a counting semaphore with no cap, so presenting without a slot would lift the latency limit for the rest of the stream. If no slot comes for 1 s while frames keep arriving, the Direct3D device and swap chain are recreated, shaders included (the new swap chain resets the object), and it's logged. The 1 s recreate is Claude's call.
 - **V-Sync Off:** the swap chain is created with ALLOW_TEARING and presents with `Present(0, ALLOW_TEARING)` after the same bounded wait (1 s). Frames show instantly but tear, unless VRR is on, in which case they are instant and tear-free.
 - **Colour (Claude's call):** BT.709 limited range for modes of 720 lines or more, BT.601 below.
 - **Scaling (Claude's call):** sharper than plain bilinear when upscaling (for example 1080p on the 1440p screen). The exact filter is left to the builder.
@@ -181,7 +181,7 @@ Some of these names are the draft's; the Architecture section of `CLAUDE.md` has
    - The bars are 13.8 ms mean and 18.2 ms p95 at 60 Hz, 8.5 ms and 7.6 ms at 165 Hz. The old ~30 ms backlog still fails by a wide margin.
    - The queue wait is reported separately and isn't part of the arrival → Present bar.
 
-   Under the old bar, at 165 Hz the limits were a mean of 4.5 ms and a p95 of 7.6 ms. The spike met both at the 1440p60 NV12 default:
+   Under the old mean bar, the 165 Hz limits were a mean of 4.5 ms (now 8.5 ms) and a p95 of 7.6 ms (unchanged). The spike met both at the 1440p60 NV12 default:
    - arrival → Present: 0.94 ms mean, 1.27 ms p95
    - Present → screen: 3.91 ms mean, 6.83 ms p95
    - end to end: 4.85 ms mean, 7.73 ms p95

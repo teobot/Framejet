@@ -46,7 +46,14 @@ V-Sync On is `Present(1)` with a frame-latency limit of 1. A frame presented whi
 
 ## Coordination
 
-Other sessions are also changing `D3D11Presenter`: live latency display, Vortice in place of SharpDX, and precompiled shaders. Expect merge conflicts in that file. The present call is the only line this change needs there, plus the new property.
+Other sessions are also changing `D3D11Presenter`: live latency display, Vortice in place of SharpDX, and precompiled shaders. Expect merge conflicts in that file. Whichever change to it lands second must carry all of this fix, not just the present call:
+- `SwapChain2.FrameLatencyWaitableObject` and `MaximumFrameLatency = 1` (`OpenLatencyWait`).
+- The waitable flag (`DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT`) in both swap chain create paths, with and without tearing, and in `ResizeBuffers`, which must pass the flags the swap chain was created with.
+- `CloseHandle` on the waitable object in `ReleaseDevice`.
+- The `LatencyWaiter` wiring: `Plan` and `BeforePresent` before each Present, `PresentFailed` when a Present throws, `Reset` in `ReleaseDevice`, and `RecreateForStuckQueue` on `Stuck`.
+- The hardware test `Recreates_the_device_and_swap_chain_when_no_slot_comes_for_a_second`.
+
+`LatencyWaiter` and `QueueSlot` are in Framejet.Core and use no SharpDX, so a port to Vortice leaves them alone.
 
 ## Revision after measuring (2026-11-16): approach 2, with a bounded wait
 
@@ -64,7 +71,7 @@ Approach 1 failed its measuring gate. A per-frame trace on the 60 Hz screen foun
 - **Never present without a slot (Claude's call, after review).**
   - A wait that times out skips the frame in every mode. A failed Present keeps its slot for the next frame. That way every present is matched by exactly one slot taken from the waitable object.
   - The object is a counting semaphore with no cap (measured): presenting without a slot would leave a surplus that lifts the latency limit for the rest of the stream.
-  - If no slot comes for 1 s while frames keep arriving, Framejet recreates the swap chain, which resets the object, and logs it.
+  - If no slot comes for 1 s while frames keep arriving, Framejet recreates the device and swap chain (the new swap chain resets the object) and logs it.
 
 **Measured with a throwaway version, 60 Hz fullscreen, 15 s runs.**
 - Arrival → screen: 12.1–13.2 ms mean, 18.9–20.7 p95. Before, a run was either ~14 or ~30+ ms.
