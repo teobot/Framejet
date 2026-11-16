@@ -41,6 +41,8 @@ namespace Framejet
             mute.ShortcutKeyDisplayString = "M";
 
             menu.Items.Add(new ToolStripMenuItem(UiText.NameAndVersion(Application.ProductVersion)) { Enabled = false });
+            var picture = form.PictureStatus;
+            if (picture != null) menu.Items.Add(new ToolStripMenuItem(picture) { Enabled = false });
             if (form.AvailableUpdate != null)
                 menu.Items.Add(Item(UiText.UpdateTo(form.AvailableUpdate.Version) + "…", false, form.OpenUpdatePage));
             menu.Items.Add(new ToolStripSeparator());

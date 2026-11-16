@@ -41,6 +41,7 @@ namespace Framejet
         DateTime _startedAt;
         bool _started;
         string _toolbarState; // null: the windowed phase was never reached
+        string _windowedScale, _fullscreenScale; // how the picture was drawn at the end of each phase: "1:1" or a percentage
 
         public SelfTestRunner(MainForm form, CommandLine cmd)
         {
@@ -115,6 +116,7 @@ namespace Framejet
                     backend.LumaSampled += OnLumaSampled;
                     if (!await Wait(seconds)) return;
                     windowed = backend.GetStats();
+                    _windowedScale = _form.PictureScale;
                     var stayedHidden = (_form.Toolbar?.FullyHidden ?? true) && (_form.Toolbar?.ShownCount ?? 0) == shownBefore;
                     _toolbarState = !hiddenAtStart ? "still visible" : stayedHidden ? "hidden during windowed measurement" : "shown during windowed measurement";
 
@@ -126,6 +128,7 @@ namespace Framejet
                     backend.ResetStats();
                     if (!await Wait(seconds)) return;
                     fullscreen = backend.GetStats();
+                    _fullscreenScale = _form.PictureScale;
                     audio = _form.AudioBackend.GetStats(reset: false);
                     _form.ToggleFullscreen();
                 }
@@ -240,10 +243,10 @@ namespace Framejet
             Line("capture format: " + (format == null ? "none" : Invariant($"{format.Width}x{format.Height} {format.Format}")));
             Line("audio input: " + (sound?.Input?.Name ?? "none") + " (" + SourceText(sound?.InputSource ?? AudioInputSource.None) + ")");
             Line("audio output: " + (sound?.Output?.Name ?? "none") + " (" + (sound == null || sound.OutputIsDefault ? UiText.DefaultOutput : "chosen") + ")");
-            Line(Frames("windowed", windowed));
+            Line(Frames("windowed", windowed, _windowedScale));
             Line(Delays("windowed", windowed, _windowedDisplayHz));
             Line("fullscreen screen: " + (screen == null ? "none" : Invariant($"{screen.Name} {screen.Bounds.Width}x{screen.Bounds.Height}")));
-            Line(Frames("fullscreen", fullscreen));
+            Line(Frames("fullscreen", fullscreen, _fullscreenScale));
             Line(Delays("fullscreen", fullscreen, _fullscreenDisplayHz));
             Line("delay check: " + (verdict.Pass ? "ok" : verdict.Reason));
             Line("picture brightness: " + Brightness());
@@ -255,8 +258,8 @@ namespace Framejet
             return report.ToString();
         }
 
-        static string Frames(string phase, PresenterStats s)
-            => Invariant($"{phase}: frames arrived={s.Arrived} drawn={s.Drawn} dropped={s.Dropped} fps={s.MeasuredFps:0.0}");
+        static string Frames(string phase, PresenterStats s, string scale)
+            => Invariant($"{phase}: frames arrived={s.Arrived} drawn={s.Drawn} dropped={s.Dropped} fps={s.MeasuredFps:0.0} scale={scale ?? "none"}");
 
         static string Delays(string phase, PresenterStats s, int displayHz)
             => Invariant($"{phase} delay: arrival→Present mean={s.ArrivalToPresent.MeanMs:0.00} p95={s.ArrivalToPresent.P95Ms:0.00} ms; Present→screen mean={s.PresentToScreen.MeanMs:0.00} p95={s.PresentToScreen.P95Ms:0.00} ms; refresh={s.RefreshHz:0.0} Hz ({(displayHz > 0 ? "display " + displayHz + " Hz" : "display unknown")}); overlay={s.Overlay} composed={s.Composed}");

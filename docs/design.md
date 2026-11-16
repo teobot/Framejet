@@ -17,7 +17,7 @@ Marked **(owner)** where the owner decided or approved; **(Claude's call)** wher
 Goals
 - Lowest practical delay from card to screen and to speakers.
 - Rides out real-life device mess without being touched (section 4.7).
-- Uses the card's real modes at their true frame rates, with a good default; measured fps is visible.
+- Uses the card's real modes at their true frame rates, with a good default; the measured fps and whether the picture is scaled are visible.
 - Light: one small exe, opens in about a second, low CPU (Claude's target).
 - Playable on any of the reference setup's three screens (owner).
 
@@ -105,10 +105,11 @@ Non-goals
 ### 4.6 Window and controls (the owner picked a layout with the toolbar floating over the picture)
 - Dark theme. In a window, the picture fills the client area, letterboxed.
 - The **toolbar floats over the bottom of the picture** and fades out 2 s after the mouse stops moving. Moving the mouse over the window brings it back. It stays up while hovered or while a dropdown or menu is open. A new warning brings it up for 5 s **(Claude's call)**.
-- Toolbar, left to right: video device ▾ · mode ▾ · rescan ⟳ | audio output ▾ · mute · volume | V-Sync toggle · fullscreen | status text (e.g. "1440p · 59.9 fps", or a warning) | **Update to …** pill, only when a newer release is out (4.11).
+- Toolbar, left to right: video device ▾ · mode ▾ · rescan ⟳ | audio output ▾ · mute · volume | V-Sync toggle · fullscreen | status text (e.g. "1440p · 59.9 fps · 1:1", or a warning) | **Update to …** pill, only when a newer release is out (4.11).
+- **Scale (Claude's call, approved by the owner after a maximized window looked blurry):** the status ends with how the letterboxed picture is drawn: "1:1" when pixel for pixel, otherwise its size as a whole percentage of the mode's. 1440p in a maximized window on the 1440p screen is "95%"; 1080p fullscreen there is "133%". A scaled picture never reads "100%": 99.96% shows as "99%". There is no scale with no area to draw on.
 - **How it's built (Claude's call):** the toolbar is its own borderless, owned, layered window positioned over the bottom of the video, because flip-model Direct3D content can cover ordinary child controls placed on top of it. Verify early that dropdowns and the fade work, and that the picture returns to direct scanout once the toolbar hides.
 - **Fullscreen:** picture only, with no toolbar. The cursor hides after 2 s idle. F11, Alt+Enter or double-click toggles; Esc leaves fullscreen; M mutes. The right-click menu works everywhere. Shortcuts work whichever Framejet window has focus.
-- **Right-click menu:** Framejet 1.0.0 (the version; not clickable) · **Update to …** (only when a newer release is out) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
+- **Right-click menu:** Framejet and its version, such as "Framejet 1.1.0" (not clickable; a release stamps the version from its tag, and any other build says "Framejet (dev build)") · while video runs, the status without warnings, such as "1440p · 59.9 fps · 1:1" (not clickable; the toolbar never shows in fullscreen, so this is where the scale is read there) · **Update to …** (only when a newer release is out, 4.11) · Fullscreen (F11) · Mute (M) · ✓ V-Sync · Video device ▸ · Mode ▸ · Audio output ▸ · Audio input (Automatic) ▸ · Rescan devices · Exit.
 - **Messages:**
   - With no picture, centred in the picture area: "Waiting for Razer Ripsaw X… plug it in and it starts by itself", or "Couldn't start Razer Ripsaw X — retrying".
   - In the status text: "No picture — is the PS5 on?" after about 3 s of frames that are almost all darker than video black (at least 95% of sampled luma at or below 10), which is what the Ripsaw sends with no HDMI signal: black with a small logo. Ordinary black at video black (Y=16) during play does not count **(Claude's call, from the spike and the owner's PS5-off capture)**; "No audio from the card"; audio device errors, as "Audio error: {message} — retrying" while Framejet tries the audio again every 3 s by itself.
@@ -131,7 +132,7 @@ Non-goals
 `Framejet.exe --selftest out.txt` runs the real window for a few seconds (windowed, then fullscreen), writes a UTF-8 report and exits with code 0 for a pass. It exits with code 1 if must-pass 9's delay check fails **(Claude's call)**. The report covers:
 - devices found, and why each was chosen or skipped
 - the negotiated mode
-- frames arrived, drawn and dropped, and the measured fps
+- frames arrived, drawn and dropped, the measured fps, and the picture's scale ("1:1" or a percentage, as in 4.6)
 - arrival-to-screen time from DXGI frame statistics
 - presentation mode (direct/overlay or composed)
 - picture brightness mean and variation (the frame itself is never saved)

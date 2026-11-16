@@ -2,13 +2,15 @@
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <LangVersion>9.0</LangVersion>
+    <!-- A release stamps its tag's version (release.yml passes -p:Version); any other build is a dev build, which the menu
+         shows as "Framejet (dev build)" rather than a made-up version. Keep in step with UiText.DevVersion. -->
+    <Version>0.0.0-dev</Version>
     <Company>teobot</Company>
     <Copyright>Copyright (c) 2026 teobot</Copyright>
     <Prefer32Bit>false</Prefer32Bit>
     <Deterministic>true</Deterministic>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
-    <Version>0.0.0-dev</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

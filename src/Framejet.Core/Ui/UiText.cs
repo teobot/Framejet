@@ -10,13 +10,20 @@ namespace Framejet.Core.Ui
         public const string DefaultOutput = "Default output";
         public const string Automatic = "Automatic";
 
-        /// <summary>"Framejet 1.0.0": the name and the version without any +metadata suffix. A blank version gives just the name.</summary>
+        /// <summary>The version a build gets when no release tag stamps one (Directory.Build.props, release.yml).</summary>
+        public const string DevVersion = "0.0.0-dev";
+
+        /// <summary>
+        /// "Framejet 1.1.0": the name and the version without any +metadata suffix. A build from no release tag reads
+        /// "Framejet (dev build)", and a blank version gives just the name.
+        /// </summary>
         public static string NameAndVersion(string version)
         {
             if (version == null) return "Framejet";
             var plus = version.IndexOf('+');
             if (plus >= 0) version = version.Substring(0, plus);
             version = version.Trim();
+            if (version == DevVersion) return "Framejet (dev build)";
             return version.Length == 0 ? "Framejet" : "Framejet " + version;
         }
 

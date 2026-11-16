@@ -71,6 +71,12 @@ The card is sending its no-signal screen. Wake the console, or check the HDMI ca
 
 Windows gives the card to whichever app opened it last. When another app takes it (often OBS), Framejet steps aside rather than fight over it. Close the other app, then press Rescan: ⟳ on the toolbar, or **Rescan devices** in the right-click menu.
 
+### Soft or blurry picture
+
+The end of the toolbar's status says how the picture is drawn, and so does the line under the version in the right-click menu, which also works in fullscreen. **1:1** means pixel for pixel. A percentage means the picture is scaled: a 1440p mode in a maximized window on a 1440p screen shows **95%**. For the sharpest picture, go fullscreen on a screen the size of the mode, or pick the mode that matches your screen.
+
+Framejet can't see what the console sends. If the PS5 outputs less than the mode, say 1080p into a 1440p mode, the picture is enlarged before Framejet gets it. The PS5 shows its output under **Settings → Screen and Video → Video Output Information**.
+
 ### Late picture on a 60 Hz screen
 
 On a 60 Hz screen with V-Sync on, a ~60 fps source often queues behind the previous frame, adding about 30 ms. Turn V-Sync off, on the toolbar or in the right-click menu. Frames then go out at once, though the picture can tear. Screens at 144 and 165 Hz aren't affected.
