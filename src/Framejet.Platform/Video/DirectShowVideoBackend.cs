@@ -22,7 +22,7 @@ namespace Framejet.Platform.Video
 
         readonly IVideoHost _host;
         readonly ILog _log;
-        bool _vsync = true, _paused, _measureLatency;
+        bool _vsync = true, _neverSkip, _paused, _measureLatency;
 
         // The running graph and everything attached to it; all null while stopped.
         IFilterGraph2 _graph;
@@ -56,6 +56,12 @@ namespace Framejet.Platform.Video
         {
             get => _vsync;
             set { _vsync = value; if (_presenter != null) _presenter.VSync = value; }
+        }
+
+        public bool NeverSkipFrames
+        {
+            get => _neverSkip;
+            set { _neverSkip = value; if (_presenter != null) _presenter.NeverSkipFrames = value; }
         }
 
         /// <summary>While paused, frames keep arriving but are counted as dropped instead of drawn.</summary>
@@ -196,7 +202,7 @@ namespace Framejet.Platform.Video
                 // 8. The presenter, with the current settings.
                 graphMs = timer.Elapsed.TotalMilliseconds - devicesMs;
                 step = "create the presenter";
-                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, Paused = _paused, MeasureLatency = _measureLatency };
+                _presenter = new D3D11Presenter(_host.VideoHandle, _log) { VSync = _vsync, NeverSkipFrames = _neverSkip, Paused = _paused, MeasureLatency = _measureLatency };
                 _presenter.LumaSampled += OnLumaSampled;
                 _presenter.Start(format, slot);
                 presenterMs = timer.Elapsed.TotalMilliseconds - devicesMs - graphMs;

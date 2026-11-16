@@ -91,13 +91,13 @@ namespace Framejet.Platform.Video
         uint _lastStatsPresentCount, _lastStatsSyncCount, _lastExactPresent;
 
         // Set from the UI thread, read by the render thread.
-        volatile bool _vsync = true, _paused, _measureLatency, _tearingSupported;
+        volatile bool _vsync = true, _neverSkip, _lastPresentTearing, _paused, _measureLatency, _tearingSupported;
         int _simulateDeviceLost;
         long _firstPresent; // written by the render thread once per start, read from any thread
 
         // Stats, guarded by _statsLock.
         readonly object _statsLock = new object();
-        long _drawn, _skipped, _publishedAtReset, _replacedAtReset, _resetTime;
+        long _replaced, _drawn, _skipped, _publishedAtReset, _replacedAtReset, _resetTime;
         int _overlay, _composed, _deviceResets;
         readonly SampleRing _arrivalToPresent = new SampleRing(MaxSamples);
         readonly SampleRing _presentToScreen = new SampleRing(MaxSamples);
@@ -119,6 +119,13 @@ namespace Framejet.Platform.Video
 
         /// <summary>On (the default): Present(1) waits for the next refresh. Off: Present(0), tearing when supported.</summary>
         public bool VSync { get => _vsync; set => _vsync = value; }
+
+        /// <summary>With V-Sync On: true waits every frame's turn (Present(1)); false lets the newest frame replace one not yet shown (Present(0) without tearing).</summary>
+        public bool NeverSkipFrames { get => _neverSkip; set => _neverSkip = value; }
+
+        /// <summary>The sync interval and flags for one present. Only V-Sync Off may tear.</summary>
+        internal static (int SyncInterval, PresentFlags Flags) PresentArgs(bool vsync, bool neverSkip, bool tearingSupported)
+            => vsync ? (neverSkip ? 1 : 0, PresentFlags.None) : (0, tearingSupported ? AllowTearingPresent : PresentFlags.None);
 
         /// <summary>While paused, arriving frames are counted as dropped and not drawn.</summary>
         public bool Paused { get => _paused; set => _paused = value; }
@@ -190,7 +197,7 @@ namespace Framejet.Platform.Video
                 long vblanks = _vblankLastCount - _vblankBaseCount, ticks = _vblankLastQpc - _vblankBaseQpc;
                 stats.Arrived = published - _publishedAtReset;
                 stats.Drawn = _drawn;
-                stats.Dropped = replaced - _replacedAtReset + _skipped;
+                stats.Dropped = replaced - _replacedAtReset + _skipped + _replaced;
                 stats.MeasuredFps = DrawRateLocked();
                 stats.RefreshHz = _hasVblankBase && vblanks > 0 && ticks > 0 ? vblanks * (double)Stopwatch.Frequency / ticks : 0;
                 stats.Overlay = _overlay;
@@ -232,7 +239,7 @@ namespace Framejet.Platform.Video
                 _publishedAtReset = published;
                 _replacedAtReset = replaced;
                 _resetTime = Stopwatch.GetTimestamp();
-                _drawn = _skipped = 0;
+                _drawn = _skipped = _replaced = 0;
                 _overlay = _composed = _deviceResets = 0;
                 _arrivalToPresent.Clear();
                 _presentToScreen.Clear();
@@ -347,8 +354,9 @@ namespace Framejet.Platform.Video
             if (Interlocked.Exchange(ref _simulateDeviceLost, 0) != 0)
                 throw new SharpDXException(new Result(DeviceRemoved), "Simulated device loss");
             long presentTime = Stopwatch.GetTimestamp();
-            if (vsync) _swapChain.Present(1, PresentFlags.None);
-            else _swapChain.Present(0, tearing ? AllowTearingPresent : PresentFlags.None);
+            var (syncInterval, presentFlags) = PresentArgs(vsync, _neverSkip, _tearingSupported);
+            _lastPresentTearing = tearing;
+            _swapChain.Present(syncInterval, presentFlags);
             if (Interlocked.Read(ref _firstPresent) == 0) Interlocked.Exchange(ref _firstPresent, Stopwatch.GetTimestamp());
             _frameInFlight = false;
             _drawFailureLogged = false;
@@ -445,8 +453,11 @@ namespace Framejet.Platform.Video
             uint presentCount = (uint)fs.PresentCount, presentRefresh = (uint)fs.PresentRefreshCount, syncRefresh = (uint)fs.SyncRefreshCount;
             if (syncRefresh == 0) return;
             if (presentCount == _lastStatsPresentCount && syncRefresh == _lastStatsSyncCount) return;
+            uint prevPresent = _lastStatsPresentCount, prevSync = _lastStatsSyncCount;
             _lastStatsPresentCount = presentCount;
             _lastStatsSyncCount = syncRefresh;
+            // Frames presented within one refresh replaced each other; counted only while measuring, because the 1 ms poll sees every refresh.
+            long replacedNow = prevPresent != 0 && prevSync != 0 && !_lastPresentTearing && syncRefresh - prevSync == 1 && presentCount - prevPresent > 1 ? presentCount - prevPresent - 1 : 0;
             bool exact = false;
             long presentTime = 0;
             if (presentRefresh == syncRefresh && presentCount != _lastExactPresent)
@@ -462,6 +473,7 @@ namespace Framejet.Platform.Video
                     _vblankBaseCount = syncRefresh;
                     _vblankBaseQpc = fs.SyncQPCTime;
                 }
+                _replaced += replacedNow;
                 _vblankLastCount = syncRefresh;
                 _vblankLastQpc = fs.SyncQPCTime;
                 // Only frames presented since the last reset, so the window matches ArrivalToPresent.

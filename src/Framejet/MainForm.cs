@@ -292,7 +292,7 @@ namespace Framejet
         void StartDevices()
         {
             _dispatcher = new ControlDispatcher(this);
-            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, Paused = WindowState == FormWindowState.Minimized };
+            VideoBackend = new DirectShowVideoBackend(_surface, Log) { VSync = Settings.VSync, NeverSkipFrames = Settings.NeverSkipFrames, Paused = WindowState == FormWindowState.Minimized };
             AudioBackend = new WasapiAudioBackend(Log);
             try
             {

@@ -36,6 +36,29 @@ namespace Framejet.Platform.Tests.Video
         [SkippableFact, Trait("Category", "Hardware")] public void VSync_off_presents_with_the_tearing_flag_accepted()
             => WithPresenter((p, slot, f) => { Assert.True(p.TearingSupported); p.VSync = false; Feed(slot, f, 60); Sta.Pump(TimeSpan.FromSeconds(1.5)); Assert.True(p.GetStats().Drawn >= 50); });
 
+        [Theory]
+        [InlineData(true, false, true, 0, 0)]
+        [InlineData(true, false, false, 0, 0)]
+        [InlineData(true, true, true, 1, 0)]
+        [InlineData(true, true, false, 1, 0)]
+        [InlineData(false, false, true, 0, 0x200)]
+        [InlineData(false, true, true, 0, 0x200)]
+        [InlineData(false, false, false, 0, 0)]
+        public void Picks_the_present_call(bool vsync, bool neverSkip, bool tearing, int interval, int flags)
+        {
+            var result = D3D11Presenter.PresentArgs(vsync, neverSkip, tearing);
+            Assert.Equal(interval, result.SyncInterval); Assert.Equal(flags, (int)result.Flags);
+        }
+
+        [SkippableFact, Trait("Category", "Hardware")] public void Newest_wins_keeps_up_and_survives_toggles_and_device_loss()
+            => WithPresenter((p, slot, f) => { p.MeasureLatency = true; var feeder = Feed(slot, f, 200); Sta.Pump(TimeSpan.FromSeconds(1));
+                p.NeverSkipFrames = true; Sta.Pump(TimeSpan.FromSeconds(0.5)); p.NeverSkipFrames = false; Sta.Pump(TimeSpan.FromSeconds(0.5));
+                p.SimulateDeviceLost(); Sta.Pump(TimeSpan.FromSeconds(1));
+                // Sleep(16) can run at 31 ms on a coarse timer, so let the feeder finish its 200 frames before counting.
+                var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(6)) Sta.Pump(TimeSpan.FromMilliseconds(50));
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
+                Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples"); });
+
         // DelayCheck passes vacuously when RefreshHz is 0, so a broken frame-statistics path must fail here.
         [SkippableFact, Trait("Category", "Hardware")] public void Measures_latency_from_frame_statistics()
             => WithPresenter((p, slot, f) => { p.MeasureLatency = true; Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(2)); var s = p.GetStats();
