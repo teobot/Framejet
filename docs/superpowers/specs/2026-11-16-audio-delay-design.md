@@ -1,6 +1,6 @@
 # Audio delay: measure it, then cut it — design
 
-Status: draft for the owner's approval. Extends `docs/design.md` §4.5, §4.9 and must-pass 5.
+Status: approved by the owner 2026-11-16. Extends `docs/design.md` §4.5, §4.9 and must-pass 5.
 
 ## 1. Intent
 
