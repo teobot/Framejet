@@ -40,7 +40,7 @@ Considered:
 
 - **Pure logic in Core:** a `ScalingMode` enum (`Fill`, `WholeStepsCrisp`, `WholeStepsSmooth`, `OneToOne`) and the rectangle function sit next to `Letterbox`, with xUnit tests covering at least: 1440p in 2560×1360 for each mode, 1080p in 2560×1440 (Fill 133%, whole steps 1:1 centred), 720p in 2560×1440 (whole steps 2× = 2560×1440), and 1:1 crop offsets that go negative and are centred. `StatusText.Scale` takes the mode.
 - **Shader:** the crisp option at 2× and above samples point (nearest). Smooth and Fill upscale with Catmull-Rom. At 1× and when downscaling, all modes stay bilinear, as now.
-- **Render thread:** the choice reaches the presenter as a property like `VSync`, read once per frame. A change redraws the last frame, so a paused or static picture updates.
+- **Render thread:** the choice reaches the presenter as a property like `VSync`, read once per frame. A change applies from the next frame (the card sends frames continuously, so within about 17 ms at 60 fps); nothing is drawn while minimized anyway.
 - **Setting:** `scaling=fill|crisp|smooth|1to1` in `settings.ini`, default `fill`. An unknown value means `fill`. It's saved on pick.
 - **Self-test:** forces Fill in memory, like V-Sync, so the lag gate is unchanged. The report's scale line stays.
 - **Docs:** `docs/design.md` §4.2 "Scaling" and §4.6 (toolbar layout, menu list) get updated to point here.
