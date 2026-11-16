@@ -56,15 +56,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          # Framejet.exe keeps the README's latest/download link and older copies' update check working. A copy named
-          # Framejet-1.2.0.exe also goes up, so a downloads folder shows which version each file is.
-          $exe = 'src\Framejet\bin\Release\net48\Framejet.exe'
-          $files = @($exe, 'THIRD-PARTY-NOTICES.md', 'third-party\DirectShowLib-source.zip')
-          if ($env:VERSION -ne '0.0.0-dev') {
-            $named = "src\Framejet\bin\Release\net48\Framejet-$env:VERSION.exe"
-            Copy-Item $exe $named
-            $files += $named
-          }
+          # One exe, always named Framejet.exe: the README's latest/download link and every copy's update check need that
+          # name. The window title and the file's properties show which version it is.
+          $files = @('src\Framejet\bin\Release\net48\Framejet.exe', 'THIRD-PARTY-NOTICES.md', 'third-party\DirectShowLib-source.zip')
           gh release upload "$env:TAG" @files --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
