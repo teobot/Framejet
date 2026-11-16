@@ -4,6 +4,19 @@ namespace Framejet.Core.Ui
 {
     public static class UiText
     {
+        public const string ScalingMenu = "Scaling";
+
+        public static string ScalingLabel(ScalingMode mode)
+        {
+            switch (mode)
+            {
+                case ScalingMode.WholeStepsCrisp: return "Whole steps (crisp)";
+                case ScalingMode.WholeStepsSmooth: return "Whole steps (smooth)";
+                case ScalingMode.OneToOne: return "1:1";
+                default: return "Fill";
+            }
+        }
+
         public const string NoCard = "No capture card found";
         public const string NoPicture = "No picture — is the PS5 on?";
         public const string NoAudio = "No audio from the card";
