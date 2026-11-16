@@ -58,6 +58,7 @@ namespace Framejet.Platform.Video
             set { _vsync = value; if (_presenter != null) _presenter.VSync = value; }
         }
 
+        /// <summary>With V-Sync On: true waits for every frame's turn; false (the default) skips a frame when the display queue is still busy after 4 ms.</summary>
         public bool NeverSkipFrames
         {
             get => _neverSkip;

@@ -13,11 +13,12 @@ namespace Framejet.Platform.Tests.Video
 {
     public class D3D11PresenterTests
     {
-        static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat> body) => Sta.Run(() =>
+        static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat> body) => WithPresenter((p, slot, f, _) => body(p, slot, f));
+        static void WithPresenter(Action<D3D11Presenter, LatestFrameSlot, CaptureFormat, Form> body) => Sta.Run(() =>
         {
             using var form = new Form { Width = 1280, Height = 720, StartPosition = FormStartPosition.CenterScreen }; form.Show();
             var f = new CaptureFormat(1280, 720, GrabberFormat.Nv12, false); var slot = new LatestFrameSlot(f.FrameBytes);
-            using var p = new D3D11Presenter(form.Handle, NullLog.Instance); p.Start(f, slot); body(p, slot, f); p.Stop();
+            using var p = new D3D11Presenter(form.Handle, NullLog.Instance); p.Start(f, slot); body(p, slot, f, form); p.Stop();
         });
         static Thread Feed(LatestFrameSlot slot, CaptureFormat f, int frames, int[] fed = null) { var t = new Thread(() => { var d = SyntheticFrames.Solid(f, 120, 128, 128); var h = GCHandle.Alloc(d, GCHandleType.Pinned);
             for (int i = 0; i < frames; i++) { slot.Publish(h.AddrOfPinnedObject(), d.Length, Stopwatch.GetTimestamp()); if (fed != null) Interlocked.Increment(ref fed[0]); Thread.Sleep(16); } h.Free(); }) { IsBackground = true }; t.Start(); return t; }
@@ -37,17 +38,18 @@ namespace Framejet.Platform.Tests.Video
             => WithPresenter((p, slot, f) => { Assert.True(p.TearingSupported); p.VSync = false; Feed(slot, f, 60); Sta.Pump(TimeSpan.FromSeconds(1.5)); Assert.True(p.GetStats().Drawn >= 50); });
 
         [Theory]
-        [InlineData(true, false, true, 0, 0)]
-        [InlineData(true, false, false, 0, 0)]
-        [InlineData(true, true, true, 1, 0)]
-        [InlineData(true, true, false, 1, 0)]
-        [InlineData(false, false, true, 0, 0x200)]
-        [InlineData(false, true, true, 0, 0x200)]
-        [InlineData(false, false, false, 0, 0)]
-        public void Picks_the_present_call(bool vsync, bool neverSkip, bool tearing, int interval, int flags)
+        [InlineData(true, false, true, 1, 0, 4, true)]
+        [InlineData(true, false, false, 1, 0, 4, true)]
+        [InlineData(true, true, true, 1, 0, 1000, false)]
+        [InlineData(true, true, false, 1, 0, 1000, false)]
+        [InlineData(false, false, true, 0, 0x200, 1000, false)]
+        [InlineData(false, true, true, 0, 0x200, 1000, false)]
+        [InlineData(false, false, false, 0, 0, 1000, false)]
+        public void Plans_the_present(bool vsync, bool neverSkip, bool tearing, int interval, int flags, int waitMs, bool skip)
         {
-            var result = D3D11Presenter.PresentArgs(vsync, neverSkip, tearing);
-            Assert.Equal(interval, result.SyncInterval); Assert.Equal(flags, (int)result.Flags);
+            var plan = D3D11Presenter.Plan(vsync, neverSkip, tearing);
+            Assert.Equal(interval, plan.SyncInterval); Assert.Equal(flags, (int)plan.Flags);
+            Assert.Equal(waitMs, (int)plan.WaitMs); Assert.Equal(skip, plan.SkipOnTimeout);
         }
 
         [SkippableFact, Trait("Category", "Hardware")] public void Newest_wins_keeps_up_and_survives_toggles_and_device_loss()
@@ -57,7 +59,16 @@ namespace Framejet.Platform.Tests.Video
                 // Sleep(16) can run at 31 ms on a coarse timer, so let the feeder finish its 200 frames before counting.
                 var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(6)) Sta.Pump(TimeSpan.FromMilliseconds(50));
                 Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
-                Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples"); });
+                Assert.Equal(1, s.DeviceResets); Assert.True(s.Drawn >= 120, $"drawn {s.Drawn}"); Assert.True(s.PresentToScreen.Count > 0, "no Present to screen samples");
+                Assert.True(s.QueueWait.Count > 0, "no queue wait samples"); });
+
+        // ResizeBuffers must pass the flags the swap chain was created with, the waitable-object flag included, or it fails.
+        [SkippableFact, Trait("Category", "Hardware")] public void Waitable_swap_chain_survives_resize()
+            => WithPresenter((p, slot, f, form) => { var feeder = Feed(slot, f, 150); Sta.Pump(TimeSpan.FromSeconds(0.5));
+                form.Size = new System.Drawing.Size(960, 540); Sta.Pump(TimeSpan.FromSeconds(0.5)); form.Size = new System.Drawing.Size(1280, 720);
+                var wait = Stopwatch.StartNew(); while (feeder.IsAlive && wait.Elapsed < TimeSpan.FromSeconds(8)) Sta.Pump(TimeSpan.FromMilliseconds(50));
+                Sta.Pump(TimeSpan.FromSeconds(0.3)); var s = p.GetStats();
+                Assert.True(s.Drawn >= 100, $"drawn {s.Drawn}, dropped {s.Dropped}"); Assert.Equal(0, s.DeviceResets); });
 
         // DelayCheck passes vacuously when RefreshHz is 0, so a broken frame-statistics path must fail here.
         [SkippableFact, Trait("Category", "Hardware")] public void Measures_latency_from_frame_statistics()
